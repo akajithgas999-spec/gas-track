@@ -22,32 +22,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
       setSession(s);
       setUser(s?.user ?? null);
-      if (s?.user) {
-        setTimeout(() => checkAdmin(s.user.id), 0);
-      } else {
-        setIsAdmin(false);
-        setLoading(false);
-      }
+      setIsAdmin(!!s?.user);
+      setLoading(false);
     });
     supabase.auth.getSession().then(({ data: { session: s } }) => {
       setSession(s);
       setUser(s?.user ?? null);
-      if (s?.user) checkAdmin(s.user.id);
-      else setLoading(false);
+      setIsAdmin(!!s?.user);
+      setLoading(false);
     });
     return () => sub.subscription.unsubscribe();
   }, []);
-
-  async function checkAdmin(uid: string) {
-    const { data } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", uid)
-      .eq("role", "admin")
-      .maybeSingle();
-    setIsAdmin(!!data);
-    setLoading(false);
-  }
 
   return (
     <Ctx.Provider
