@@ -18,7 +18,7 @@ export default function Customers() {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<any | null>(null);
-  const [form, setForm] = useState({ name: "", phone: "", email: "", gst_number: "", address: "", notes: "" });
+  const [form, setForm] = useState({ name: "", phone: "", email: "", gst_number: "", address: "", notes: "", initial_deposit: "0", deposit_notes: "" });
 
   // Deposit dialog
   const [depOpen, setDepOpen] = useState(false);
@@ -44,8 +44,8 @@ export default function Customers() {
   };
   useEffect(() => { load(); }, []);
 
-  const openNew = () => { setEdit(null); setForm({ name: "", phone: "", email: "", gst_number: "", address: "", notes: "" }); setOpen(true); };
-  const openEdit = (c: any) => { setEdit(c); setForm({ name: c.name, phone: c.phone ?? "", email: c.email ?? "", gst_number: c.gst_number ?? "", address: c.address ?? "", notes: c.notes ?? "" }); setOpen(true); };
+  const openNew = () => { setEdit(null); setForm({ name: "", phone: "", email: "", gst_number: "", address: "", notes: "", initial_deposit: "0", deposit_notes: "" }); setOpen(true); };
+  const openEdit = (c: any) => { setEdit(c); setForm({ name: c.name, phone: c.phone ?? "", email: c.email ?? "", gst_number: c.gst_number ?? "", address: c.address ?? "", notes: c.notes ?? "", initial_deposit: "0", deposit_notes: "" }); setOpen(true); };
 
   const save = async () => {
     if (!form.name.trim()) return toast.error("Name required");
@@ -57,10 +57,35 @@ export default function Customers() {
       address: form.address.trim() || null,
       notes: form.notes.trim() || null,
     };
-    const { error } = edit
-      ? await supabase.from("customers").update(payload).eq("id", edit.id)
-      : await supabase.from("customers").insert(payload);
-    if (error) return toast.error(error.message);
+    
+    let result: any;
+    if (edit) {
+      result = await supabase.from("customers").update(payload).eq("id", edit.id);
+    } else {
+      result = await supabase.from("customers").insert(payload).select().single();
+    }
+    
+    if (result.error) return toast.error(result.error.message);
+
+    // Create initial deposit if specified for a new customer
+    if (!edit && result.data && Number(form.initial_deposit) > 0) {
+      const depAmt = Number(form.initial_deposit);
+      const { error: depError } = await supabase.from("customer_deposits").insert({
+        customer_id: result.data.id,
+        type: "collected",
+        amount: depAmt,
+        occurred_at: new Date().toISOString(),
+        notes: form.deposit_notes.trim() || "Initial connection deposit",
+      });
+      if (depError) {
+        toast.error("Customer created, but deposit failed: " + depError.message);
+      } else {
+        supabase.functions.invoke("notify-deposit-change", {
+          body: { customer_id: result.data.id, type: "collected", amount: depAmt },
+        }).catch(() => {});
+      }
+    }
+    
     toast.success("Saved");
     setOpen(false);
     load();
@@ -132,6 +157,29 @@ export default function Customers() {
                 <div><Label>GST number</Label><Input value={form.gst_number} onChange={(e) => setForm({ ...form, gst_number: e.target.value })} placeholder="22AAAAA0000A1Z5" /></div>
                 <div><Label>Address</Label><Textarea value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></div>
                 <div><Label>Notes</Label><Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
+                {!edit && (
+                  <div className="border-t border-border/40 pt-3 space-y-3">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-primary">Initial Connection Deposit</h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <Label>Deposit Amount (₹)</Label>
+                        <Input 
+                          type="number" 
+                          value={form.initial_deposit} 
+                          onChange={(e) => setForm({ ...form, initial_deposit: e.target.value })} 
+                        />
+                      </div>
+                      <div>
+                        <Label>Deposit Notes</Label>
+                        <Input 
+                          value={form.deposit_notes} 
+                          onChange={(e) => setForm({ ...form, deposit_notes: e.target.value })} 
+                          placeholder="Initial connection deposit"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <Button onClick={save} className="w-full">Save</Button>
               </div>
             </DialogContent>

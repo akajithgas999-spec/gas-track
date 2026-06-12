@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export default function Reports() {
   const [from, setFrom] = useState(() => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); });
@@ -12,25 +13,36 @@ export default function Reports() {
   const [sales, setSales] = useState<any[]>([]);
   const [purchases, setPurchases] = useState<any[]>([]);
   const [deadCylinders, setDeadCylinders] = useState<any[]>([]);
+  const [types, setTypes] = useState<any[]>([]);
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+
+  const loadTypes = async () => {
+    const { data } = await supabase.from("cylinder_types").select("id, name, code").order("name");
+    setTypes(data ?? []);
+  };
+
+  useEffect(() => {
+    loadTypes();
+  }, []);
 
   useEffect(() => {
     (async () => {
       const [{ data: s }, { data: p }, { data: d }] = await Promise.all([
         supabase
           .from("invoices")
-          .select("invoice_number, billing_date, total, taxable_amount, cgst_amount, sgst_amount, status, customers(name, customer_number)")
+          .select("invoice_number, billing_date, total, taxable_amount, cgst_amount, sgst_amount, status, customers(name, customer_number), invoice_items(type_id, taxable, cgst_amount, sgst_amount, total)")
           .gte("billing_date", from)
           .lte("billing_date", to)
           .order("billing_date", { ascending: false }),
         supabase
           .from("purchases")
-          .select("purchase_number, bill_number, bill_date, total, taxable_amount, cgst_amount, sgst_amount, suppliers(name), purchase_items(id)")
+          .select("purchase_number, bill_number, bill_date, total, taxable_amount, cgst_amount, sgst_amount, suppliers(name), purchase_items(type_id, taxable, cgst_amount, sgst_amount, total)")
           .gte("bill_date", from)
           .lte("bill_date", to)
           .order("bill_date", { ascending: false }),
         supabase
           .from("cylinders")
-          .select("id, serial_number, status, issued_at, cylinder_types(code,name), customers:current_customer_id(name, customer_number, phone)")
+          .select("id, serial_number, status, type_id, issued_at, cylinder_types(code,name), customers:current_customer_id(name, customer_number, phone)")
           .in("status", ["maintenance", "retired"]),
       ]);
       setSales(s ?? []);
@@ -39,14 +51,45 @@ export default function Reports() {
     })();
   }, [from, to]);
 
-  const salesTotals = sales.reduce((a, x) => ({
+  const filteredSales = sales.map((s) => {
+    if (typeFilter === "all") return s;
+    const matchingItems = (s.invoice_items ?? []).filter((item: any) => item.type_id === typeFilter);
+    if (matchingItems.length === 0) return null;
+    return {
+      ...s,
+      taxable_amount: matchingItems.reduce((sum: number, item: any) => sum + Number(item.taxable ?? 0), 0),
+      cgst_amount: matchingItems.reduce((sum: number, item: any) => sum + Number(item.cgst_amount ?? 0), 0),
+      sgst_amount: matchingItems.reduce((sum: number, item: any) => sum + Number(item.sgst_amount ?? 0), 0),
+      total: matchingItems.reduce((sum: number, item: any) => sum + Number(item.total ?? 0), 0),
+    };
+  }).filter(Boolean) as any[];
+
+  const filteredPurchases = purchases.map((p) => {
+    if (typeFilter === "all") return p;
+    const matchingItems = (p.purchase_items ?? []).filter((item: any) => item.type_id === typeFilter);
+    if (matchingItems.length === 0) return null;
+    return {
+      ...p,
+      taxable_amount: matchingItems.reduce((sum: number, item: any) => sum + Number(item.taxable ?? 0), 0),
+      cgst_amount: matchingItems.reduce((sum: number, item: any) => sum + Number(item.cgst_amount ?? 0), 0),
+      sgst_amount: matchingItems.reduce((sum: number, item: any) => sum + Number(item.sgst_amount ?? 0), 0),
+      total: matchingItems.reduce((sum: number, item: any) => sum + Number(item.total ?? 0), 0),
+      purchase_items: matchingItems,
+    };
+  }).filter(Boolean) as any[];
+
+  const filteredDead = deadCylinders.filter(
+    (d) => typeFilter === "all" || d.type_id === typeFilter
+  );
+
+  const salesTotals = filteredSales.reduce((a, x) => ({
     taxable: a.taxable + Number(x.taxable_amount ?? 0),
     cgst: a.cgst + Number(x.cgst_amount ?? 0),
     sgst: a.sgst + Number(x.sgst_amount ?? 0),
     total: a.total + Number(x.total ?? 0),
   }), { taxable: 0, cgst: 0, sgst: 0, total: 0 });
 
-  const purchaseTotals = purchases.reduce((a, x) => ({
+  const purchaseTotals = filteredPurchases.reduce((a, x) => ({
     taxable: a.taxable + Number(x.taxable_amount ?? 0),
     cgst: a.cgst + Number(x.cgst_amount ?? 0),
     sgst: a.sgst + Number(x.sgst_amount ?? 0),
@@ -58,6 +101,16 @@ export default function Reports() {
       <div className="flex flex-col sm:flex-row sm:items-end gap-3">
         <div><Label className="text-xs">From</Label><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
         <div><Label className="text-xs">To</Label><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
+        <div className="w-full sm:w-[220px]">
+          <Label className="text-xs">Cylinder Type</Label>
+          <Select value={typeFilter} onValueChange={setTypeFilter}>
+            <SelectTrigger className="h-10"><SelectValue placeholder="All types" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All types</SelectItem>
+              {types.map((t) => <SelectItem key={t.id} value={t.id}>{t.code} — {t.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <Tabs defaultValue="sales">
@@ -77,7 +130,7 @@ export default function Reports() {
                 <tr><th className="text-left px-4 py-3">Invoice #</th><th className="text-left px-4 py-3">Date</th><th className="text-left px-4 py-3">Customer</th><th className="text-right px-4 py-3">Taxable</th><th className="text-right px-4 py-3">CGST</th><th className="text-right px-4 py-3">SGST</th><th className="text-right px-4 py-3">Total</th><th className="text-left px-4 py-3">Status</th></tr>
               </thead>
               <tbody>
-                {sales.map((s) => (
+                {filteredSales.map((s) => (
                   <tr key={s.invoice_number} className="border-t border-border/40">
                     <td className="px-4 py-3 font-mono font-semibold text-primary">{s.invoice_number}</td>
                     <td className="px-4 py-3 font-mono text-xs">{new Date(s.billing_date).toLocaleDateString()}</td>
@@ -89,7 +142,7 @@ export default function Reports() {
                     <td className="px-4 py-3 text-xs uppercase">{s.status}</td>
                   </tr>
                 ))}
-                {sales.length === 0 && <tr><td colSpan={8} className="text-center py-12 text-muted-foreground">No sales in range.</td></tr>}
+                {filteredSales.length === 0 && <tr><td colSpan={8} className="text-center py-12 text-muted-foreground">No sales in range.</td></tr>}
               </tbody>
             </table>
             </div>
@@ -105,7 +158,7 @@ export default function Reports() {
                 <tr><th className="text-left px-4 py-3">Purchase #</th><th className="text-left px-4 py-3">Bill #</th><th className="text-left px-4 py-3">Date</th><th className="text-left px-4 py-3">Supplier</th><th className="text-right px-4 py-3">Cyl</th><th className="text-right px-4 py-3">Taxable</th><th className="text-right px-4 py-3">CGST</th><th className="text-right px-4 py-3">SGST</th><th className="text-right px-4 py-3">Total</th></tr>
               </thead>
               <tbody>
-                {purchases.map((p) => (
+                {filteredPurchases.map((p) => (
                   <tr key={p.purchase_number} className="border-t border-border/40">
                     <td className="px-4 py-3 font-mono font-semibold text-primary">{p.purchase_number}</td>
                     <td className="px-4 py-3 font-mono text-xs">{p.bill_number ?? "—"}</td>
@@ -118,7 +171,7 @@ export default function Reports() {
                     <td className="px-4 py-3 text-right font-mono font-semibold">₹{Number(p.total ?? 0).toLocaleString()}</td>
                   </tr>
                 ))}
-                {purchases.length === 0 && <tr><td colSpan={9} className="text-center py-12 text-muted-foreground">No purchases in range.</td></tr>}
+                {filteredPurchases.length === 0 && <tr><td colSpan={9} className="text-center py-12 text-muted-foreground">No purchases in range.</td></tr>}
               </tbody>
             </table>
             </div>
@@ -157,7 +210,7 @@ export default function Reports() {
                 <tr><th className="text-left px-4 py-3">Serial #</th><th className="text-left px-4 py-3">Type</th><th className="text-left px-4 py-3">Status</th><th className="text-left px-4 py-3">Last customer</th><th className="text-left px-4 py-3">Phone</th><th className="text-left px-4 py-3">Issued</th></tr>
               </thead>
               <tbody>
-                {deadCylinders.map((d) => (
+                {filteredDead.map((d) => (
                   <tr key={d.id} className="border-t border-border/40">
                     <td className="px-4 py-3 font-mono font-semibold text-primary">{d.serial_number}</td>
                     <td className="px-4 py-3">{d.cylinder_types?.code} — {d.cylinder_types?.name}</td>
@@ -167,7 +220,7 @@ export default function Reports() {
                     <td className="px-4 py-3 font-mono text-xs">{d.issued_at ? new Date(d.issued_at).toLocaleDateString() : "—"}</td>
                   </tr>
                 ))}
-                {deadCylinders.length === 0 && <tr><td colSpan={6} className="text-center py-12 text-muted-foreground">No dead cylinders.</td></tr>}
+                {filteredDead.length === 0 && <tr><td colSpan={6} className="text-center py-12 text-muted-foreground">No dead cylinders.</td></tr>}
               </tbody>
             </table>
             </div>

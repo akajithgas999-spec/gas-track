@@ -24,6 +24,7 @@ export default function Cylinders() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [fillFilter, setFillFilter] = useState<string>("all");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<any | null>(null);
   const [form, setForm] = useState({
@@ -107,7 +108,8 @@ export default function Cylinders() {
       c.customers?.name?.toLowerCase().includes(q);
     const sf = statusFilter === "all" || c.status === statusFilter;
     const ff = fillFilter === "all" || (c.fill_status ?? "filled") === fillFilter;
-    return ok && sf && ff;
+    const tf = typeFilter === "all" || c.type_id === typeFilter;
+    return ok && sf && ff && tf;
   });
 
   // Summary counts
@@ -163,6 +165,13 @@ export default function Cylinders() {
             <SelectItem value="all">All fills</SelectItem>
             <SelectItem value="filled">Filled</SelectItem>
             <SelectItem value="empty">Empty</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={typeFilter} onValueChange={setTypeFilter}>
+          <SelectTrigger className="w-full sm:w-[180px]"><SelectValue placeholder="All types" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All types</SelectItem>
+            {types.map((t) => <SelectItem key={t.id} value={t.id}>{t.code} — {t.name}</SelectItem>)}
           </SelectContent>
         </Select>
         <div className="w-full sm:w-auto sm:ml-auto">

@@ -4,11 +4,22 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Search as SearchIcon, User, Cylinder as CylIcon } from "lucide-react";
 import { Link } from "react-router-dom";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export default function Search() {
   const [q, setQ] = useState("");
   const [customers, setCustomers] = useState<any[]>([]);
   const [cylinders, setCylinders] = useState<any[]>([]);
+  const [types, setTypes] = useState<any[]>([]);
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+
+  useEffect(() => {
+    supabase
+      .from("cylinder_types")
+      .select("id, name, code")
+      .order("name")
+      .then(({ data }) => setTypes(data ?? []));
+  }, []);
 
   useEffect(() => {
     if (!q.trim()) { setCustomers([]); setCylinders([]); return; }
@@ -23,7 +34,7 @@ export default function Search() {
           .limit(50),
         supabase
           .from("cylinders")
-          .select("id, serial_number, status, issued_at, cylinder_types(name,code), customers:current_customer_id(name, customer_number, phone)")
+          .select("id, serial_number, status, type_id, issued_at, cylinder_types(name,code), customers:current_customer_id(name, customer_number, phone)")
           .ilike("serial_number", like)
           .limit(50),
       ]);
@@ -33,11 +44,22 @@ export default function Search() {
     return () => clearTimeout(t);
   }, [q]);
 
+  const filteredCylinders = cylinders.filter((c) => typeFilter === "all" || c.type_id === typeFilter);
+
   return (
     <div className="space-y-6">
-      <div className="relative max-w-2xl">
-        <SearchIcon className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
-        <Input autoFocus className="pl-9 h-11 text-base" placeholder="Search customer name, customer #, phone, GST, or cylinder serial..." value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="flex flex-col sm:flex-row gap-3 max-w-3xl">
+        <div className="relative flex-1">
+          <SearchIcon className="h-4 w-4 absolute left-3 top-3.5 text-muted-foreground" />
+          <Input autoFocus className="pl-9 h-11 text-base" placeholder="Search customer name, customer #, phone, GST, or cylinder serial..." value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <Select value={typeFilter} onValueChange={setTypeFilter}>
+          <SelectTrigger className="w-full sm:w-[200px] h-11"><SelectValue placeholder="All types" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All types</SelectItem>
+            {types.map((t) => <SelectItem key={t.id} value={t.id}>{t.code} — {t.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -64,9 +86,9 @@ export default function Search() {
         </Card>
 
         <Card className="p-5 bg-card border-border/60">
-          <h3 className="font-semibold mb-3 flex items-center gap-2"><CylIcon className="h-4 w-4 text-primary" />Cylinders ({cylinders.length})</h3>
+          <h3 className="font-semibold mb-3 flex items-center gap-2"><CylIcon className="h-4 w-4 text-primary" />Cylinders ({filteredCylinders.length})</h3>
           <div className="space-y-2">
-            {cylinders.map((c) => (
+            {filteredCylinders.map((c) => (
               <Link key={c.id} to="/cylinders" className="block p-3 rounded border border-border/40 hover:border-primary/40 hover:bg-secondary/30">
                 <div className="flex items-center justify-between">
                   <div>
@@ -84,7 +106,7 @@ export default function Search() {
                 </div>
               </Link>
             ))}
-            {q && cylinders.length === 0 && <p className="text-xs text-muted-foreground py-4 text-center">No cylinders</p>}
+            {q && filteredCylinders.length === 0 && <p className="text-xs text-muted-foreground py-4 text-center">No cylinders</p>}
           </div>
         </Card>
       </div>
