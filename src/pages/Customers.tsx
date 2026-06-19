@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Pencil, Search, Phone, MapPin, Wallet, AlertTriangle } from "lucide-react";
+import { Plus, Trash2, Pencil, Search, Phone, MapPin, Wallet, AlertTriangle, Upload } from "lucide-react";
 import { toast } from "sonner";
 
 const OVERDUE_DAYS = 30;
@@ -25,6 +25,109 @@ export default function Customers() {
   const [depCustomer, setDepCustomer] = useState<any | null>(null);
   const [depForm, setDepForm] = useState({ type: "collected", amount: "0", occurred_at: new Date().toISOString().slice(0, 10), notes: "" });
   const [depHistory, setDepHistory] = useState<any[]>([]);
+
+  // Import dialog
+  const [importOpen, setImportOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setImporting(true);
+    toast.info("Importing data, please wait...");
+    try {
+      const XLSX = await import('xlsx');
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      
+      // Read as 2D array to handle files that have titles before the header row
+      const rawData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as any[][];
+      
+      let headerRowIndex = -1;
+      let nameCol = -1;
+      let phoneCol = -1;
+      let depCol = -1;
+      let addrCol = -1;
+      let notesCol = -1;
+
+      // Scan the first 20 rows to find the header row
+      for (let i = 0; i < Math.min(20, rawData.length); i++) {
+        const row = rawData[i];
+        if (!row || !Array.isArray(row)) continue;
+        
+        const findCol = (keywords: string[]) => row.findIndex((cell: any) => 
+          typeof cell === 'string' && keywords.some(kw => cell.toLowerCase().trim().includes(kw))
+        );
+        
+        nameCol = findCol(['name', 'customer', 'party', 'client', 'particular', 'description']);
+        if (nameCol !== -1) {
+          headerRowIndex = i;
+          phoneCol = findCol(['phone', 'contact', 'mobile', 'ph']);
+          depCol = findCol(['deposit', 'advance', 'balance', 'amount', 'security', 'rs', 'rupee']);
+          addrCol = findCol(['address', 'location', 'place']);
+          notesCol = findCol(['notes', 'details', 'remark']);
+          break;
+        }
+      }
+
+      if (headerRowIndex === -1) {
+        // Fallback: If we couldn't find a header row, show the user the first row of data so they can tell us
+        const firstRowStr = (rawData[0] || []).map(String).join(', ');
+        toast.error(`Could not find a 'Name' column. First row seen: ${firstRowStr}`);
+        setImporting(false);
+        e.target.value = '';
+        return;
+      }
+
+      let importedCount = 0;
+      
+      for (let i = headerRowIndex + 1; i < rawData.length; i++) {
+        const row = rawData[i];
+        if (!row || !row[nameCol]) continue;
+        
+        const name = String(row[nameCol]).trim();
+        if (!name) continue;
+
+        const phone = phoneCol !== -1 && row[phoneCol] ? String(row[phoneCol]).trim() : null;
+        const depositStr = depCol !== -1 && row[depCol] ? String(row[depCol]).replace(/[^0-9.-]/g, '') : "0";
+        const depositAmt = Number(depositStr) || 0;
+        const address = addrCol !== -1 && row[addrCol] ? String(row[addrCol]).trim() : null;
+        const notes = notesCol !== -1 && row[notesCol] ? String(row[notesCol]).trim() : null;
+        
+        const { data: custData, error: custErr } = await supabase.from('customers').insert({
+          name,
+          phone,
+          address,
+          notes,
+        }).select().single();
+        
+        if (!custErr && custData && depositAmt !== 0) {
+          await supabase.from('customer_deposits').insert({
+            customer_id: custData.id,
+            type: depositAmt > 0 ? 'collected' : 'refunded',
+            amount: Math.abs(depositAmt),
+            notes: 'Imported from Excel',
+          });
+        }
+        if (!custErr) importedCount++;
+      }
+      
+      if (importedCount === 0) {
+         toast.warning("Found the columns but no data rows to import.");
+      } else {
+         toast.success(`Successfully imported ${importedCount} customers`);
+      }
+      load();
+      setImportOpen(false);
+    } catch (err: any) {
+      toast.error("Import failed: " + err.message);
+    } finally {
+      setImporting(false);
+      e.target.value = '';
+    }
+  };
 
   const load = async () => {
     const { data } = await supabase.from("customers").select("*").order("customer_number");
@@ -144,10 +247,38 @@ export default function Customers() {
           <Input className="pl-9" placeholder="Search by name, customer #, phone, GST..." value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <div className="w-full sm:w-auto sm:ml-auto">
-          <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild><Button onClick={openNew} className="w-full sm:w-auto"><Plus className="h-4 w-4 mr-2" />Add customer</Button></DialogTrigger>
-            <DialogContent>
-              <DialogHeader><DialogTitle>{edit ? "Edit" : "New"} customer</DialogTitle></DialogHeader>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Dialog open={importOpen} onOpenChange={setImportOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="w-full sm:w-auto">
+                  <Upload className="h-4 w-4 mr-2" />
+                  Import
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader><DialogTitle>Import Customers</DialogTitle></DialogHeader>
+                <div className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    Upload an Excel file (.xlsx or .xls) to bulk import customers.
+                    The file should have columns like <strong>Name</strong>, <strong>Phone</strong>, <strong>Deposit</strong>, and <strong>Address/Details</strong>.
+                  </p>
+                  <div>
+                    <Input 
+                      type="file" 
+                      accept=".xlsx, .xls, .csv" 
+                      onChange={handleImport}
+                      disabled={importing}
+                    />
+                  </div>
+                  {importing && <p className="text-sm text-primary animate-pulse">Processing import, please wait...</p>}
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={open} onOpenChange={setOpen}>
+              <DialogTrigger asChild><Button onClick={openNew} className="w-full sm:w-auto"><Plus className="h-4 w-4 mr-2" />Add customer</Button></DialogTrigger>
+              <DialogContent>
+                <DialogHeader><DialogTitle>{edit ? "Edit" : "New"} customer</DialogTitle></DialogHeader>
               <div className="space-y-3">
                 <div><Label>Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -184,6 +315,7 @@ export default function Customers() {
               </div>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
       </div>
 

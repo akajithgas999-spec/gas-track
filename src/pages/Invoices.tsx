@@ -7,8 +7,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, CheckCircle2, Clock, X, Trash2, Printer, ArrowDownToLine, ArrowUpFromLine, Package } from "lucide-react";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Plus, CheckCircle2, Clock, X, Trash2, Printer, ArrowDownToLine, ArrowUpFromLine, Package, Check, ChevronsUpDown } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 type LineItem = {
   type_id: string;
@@ -30,6 +33,7 @@ export default function Invoices() {
   const [types, setTypes] = useState<any[]>([]);
   const [filter, setFilter] = useState("all");
   const [open, setOpen] = useState(false);
+  const [customerOpen, setCustomerOpen] = useState(false);
   const [viewing, setViewing] = useState<any | null>(null);
 
   const [form, setForm] = useState({
@@ -204,18 +208,58 @@ export default function Invoices() {
                 <div className="rounded-xl border border-border/50 bg-secondary/20 p-4 space-y-3">
                   <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Customer Details</div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Customer *</Label>
-                      <Select value={form.customer_id} onValueChange={(v) => setForm({ ...form, customer_id: v })}>
-                        <SelectTrigger className="mt-1"><SelectValue placeholder="Select customer" /></SelectTrigger>
-                        <SelectContent>
-                          {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.customer_number} — {c.name}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
+                    <div className="flex flex-col">
+                      <Label className="text-xs text-muted-foreground mb-1">Customer *</Label>
+                      <Popover open={customerOpen} onOpenChange={setCustomerOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={customerOpen}
+                            className="w-full justify-between font-normal"
+                          >
+                            {form.customer_id
+                              ? (() => {
+                                  const sc = customers.find((c) => c.id === form.customer_id);
+                                  return sc ? `${sc.customer_number} — ${sc.name}` : "Select customer...";
+                                })()
+                              : "Select customer..."}
+                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[400px] p-0" align="start">
+                          <Command>
+                            <CommandInput placeholder="Search customer (name, phone, GSTIN)..." />
+                            <CommandList>
+                              <CommandEmpty>No customer found.</CommandEmpty>
+                              <CommandGroup>
+                                {customers.map((c) => (
+                                  <CommandItem
+                                    key={c.id}
+                                    value={`${c.customer_number} ${c.name} ${c.phone || ""} ${c.gst_number || ""}`}
+                                    onSelect={() => {
+                                      setForm({ ...form, customer_id: c.id });
+                                      setCustomerOpen(false);
+                                    }}
+                                  >
+                                    <Check
+                                      className={cn(
+                                        "mr-2 h-4 w-4",
+                                        form.customer_id === c.id ? "opacity-100" : "opacity-0"
+                                      )}
+                                    />
+                                    {c.customer_number} — {c.name}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
                     </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">GSTIN</Label>
-                      <Input className="mt-1" value={form.gst_number} onChange={(e) => setForm({ ...form, gst_number: e.target.value })} placeholder="Auto-filled from customer" />
+                    <div className="flex flex-col">
+                      <Label className="text-xs text-muted-foreground mb-1">GSTIN</Label>
+                      <Input value={form.gst_number} onChange={(e) => setForm({ ...form, gst_number: e.target.value })} placeholder="Auto-filled from customer" />
                     </div>
                   </div>
                   {selectedCustomer && (
