@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS public.user_roles (
 CREATE TABLE IF NOT EXISTS public.cylinder_types (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
-  code TEXT NOT NULL UNIQUE,
+  code TEXT NOT NULL,
   price NUMERIC(10,2) NOT NULL DEFAULT 0,
   deposit NUMERIC(10,2) NOT NULL DEFAULT 0,
   description TEXT,
@@ -384,6 +384,4 @@ INSERT INTO public.cylinder_types (name, code, price, deposit, description) VALU
 ('LPG 14.2 kg', 'LPG14', 900, 1500, 'LPG Cylinder 14.2 kg connection'),
 ('LPG 5 kg', 'LPG5', 450, 800, 'LPG Cylinder 5 kg connection'),
 ('LPG 19 kg', 'LPG19', 1200, 2000, 'Commercial LPG Cylinder 19 kg connection'),
-('LPG 47.5 kg', 'LPG47', 2800, 5000, 'Industrial LPG Cylinder 47.5 kg connection')
-ON CONFLICT (code) DO UPDATE 
-SET name = EXCLUDED.name, price = EXCLUDED.price, deposit = EXCLUDED.deposit, description = EXCLUDED.description;
+('LPG 47.5 kg', 'LPG47', 2800, 5000, 'Industrial LPG Cylinder 47.5 kg connection');
