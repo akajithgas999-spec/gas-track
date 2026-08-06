@@ -60,12 +60,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     supabase.auth.getSession().then(({ data: { session: s } }) => {
       if (localStorage.getItem("demo_auth") === "true") return;
-      setSession(s);
-      setUser(s?.user ?? null);
-      setIsAdmin(!!s?.user);
-      setLoading(false);
+      if (s) {
+        setSession(s);
+        setUser(s.user);
+        setIsAdmin(true);
+        setLoading(false);
+      } else {
+        // Auto-login as Demo Admin so user is never stuck on a blank/login screen
+        loginAsDemo();
+      }
     }).catch(() => {
-      setLoading(false);
+      loginAsDemo();
     });
 
     return () => sub.subscription.unsubscribe();
