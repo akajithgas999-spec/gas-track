@@ -31,7 +31,11 @@ interface CompanyCtx {
   setCompanyId: (id: string) => void;
 }
 
-const Ctx = createContext<CompanyCtx>({} as CompanyCtx);
+const Ctx = createContext<CompanyCtx>({
+  company: DEFAULT_COMPANIES[0],
+  companies: DEFAULT_COMPANIES,
+  setCompanyId: () => {},
+});
 
 export function CompanyProvider({ children }: { children: ReactNode }) {
   const [companyId, setCompanyIdState] = useState<string>(() => {

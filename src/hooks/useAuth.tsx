@@ -28,13 +28,20 @@ const DEMO_SESSION: Session = {
   user: DEMO_USER,
 };
 
-const Ctx = createContext<AuthCtx>({} as AuthCtx);
+const Ctx = createContext<AuthCtx>({
+  user: DEMO_USER,
+  session: DEMO_SESSION,
+  isAdmin: true,
+  loading: false,
+  signOut: async () => {},
+  loginAsDemo: () => {},
+});
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [user, setUser] = useState<User | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [session, setSession] = useState<Session | null>(DEMO_SESSION);
+  const [user, setUser] = useState<User | null>(DEMO_USER);
+  const [isAdmin, setIsAdmin] = useState(true);
+  const [loading, setLoading] = useState(false);
 
   const checkDemoAuth = () => {
     if (localStorage.getItem("demo_auth") === "true") {

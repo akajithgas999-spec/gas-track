@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2, Truck, Eye, Flame, Circle, CheckCircle2, AlertCircle, Clock, Calendar, CreditCard, DollarSign, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
+import { useCompany } from "@/hooks/useCompany";
 
 type Line = {
   cylinder_number: string;
@@ -68,8 +69,6 @@ function getPaymentHistory(p: any): {
 
   return { payments, paid, balance, status, firstPayDate, lastPayDate };
 }
-
-import { useCompany } from "@/hooks/useCompany";
 
 export default function Purchases() {
   const { company } = useCompany();

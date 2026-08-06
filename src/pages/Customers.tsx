@@ -9,10 +9,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2, Pencil, Search, Phone, MapPin, Wallet, AlertTriangle, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { useCompany } from "@/hooks/useCompany";
 
 const OVERDUE_DAYS = 30;
-
-import { useCompany } from "@/hooks/useCompany";
 
 export default function Customers() {
   const { company } = useCompany();
