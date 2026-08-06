@@ -18,6 +18,7 @@ import Reports from "./pages/Reports";
 import Search from "./pages/Search";
 import CustomerHistory from "./pages/CustomerHistory";
 import ExportData from "./pages/ExportData";
+import NotFound from "./pages/NotFound";
 import { CompanyProvider } from "@/hooks/useCompany";
 
 const queryClient = new QueryClient();
