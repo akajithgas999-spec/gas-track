@@ -7,55 +7,105 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Truck, Eye, Flame, Circle } from "lucide-react";
+import { Plus, Trash2, Truck, Eye, Flame, Circle, CheckCircle2, AlertCircle, Clock, Calendar, CreditCard, DollarSign, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 
 type Line = {
-  cylinder_number: string; // 1-2000
+  cylinder_number: string;
   serial_number: string;
   type_id: string;
   hsn_code: string;
-  quantity: number;
   rate: number;
   fill_status: "filled" | "empty";
 };
 
+type PaymentStatus = "paid" | "partial" | "unpaid";
+
+export type PaymentInstallment = {
+  id: string;
+  date: string; // YYYY-MM-DD
+  amount: number;
+  method: string;
+  notes?: string;
+};
+
+function getPaymentHistory(p: any): { 
+  payments: PaymentInstallment[]; 
+  paid: number; 
+  balance: number; 
+  status: PaymentStatus; 
+  firstPayDate: string | null;
+  lastPayDate: string | null;
+} {
+  let payments: PaymentInstallment[] = [];
+
+  if (p.payments && Array.isArray(p.payments) && p.payments.length > 0) {
+    payments = p.payments;
+  } else if (p.notes && typeof p.notes === "string" && p.notes.includes("__PAYMENTS__:")) {
+    try {
+      const jsonStr = p.notes.split("__PAYMENTS__:")[1].split("__END_PAYMENTS__")[0];
+      payments = JSON.parse(jsonStr);
+    } catch (e) {}
+  } else {
+    const legacyPaid = p.amount_paid !== undefined && p.amount_paid !== null ? Number(p.amount_paid) : (p.payment_status === "unpaid" ? 0 : Number(p.total));
+    if (legacyPaid > 0) {
+      payments = [{
+        id: "p-legacy-1",
+        date: p.payment_date || p.bill_date || new Date().toISOString().slice(0, 10),
+        amount: legacyPaid,
+        method: "Initial Payment",
+      }];
+    }
+  }
+
+  const total = Number(p.total || 0);
+  const paid = payments.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const balance = Math.max(0, total - paid);
+  const status: PaymentStatus = balance <= 0 ? "paid" : paid > 0 ? "partial" : "unpaid";
+
+  const firstPayDate = payments.length > 0 ? payments[0].date : (p.payment_date || null);
+  const lastPayDate = payments.length > 0 ? payments[payments.length - 1].date : (p.payment_date || null);
+
+  return { payments, paid, balance, status, firstPayDate, lastPayDate };
+}
+
+import { useCompany } from "@/hooks/useCompany";
+
 export default function Purchases() {
+  const { company } = useCompany();
   const [items, setItems] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [types, setTypes] = useState<any[]>([]);
-  const [open, setOpen] = useState(false);
-  const [supplierOpen, setSupplierOpen] = useState(false);
-  const [viewing, setViewing] = useState<any | null>(null);
-
-  const [supplier, setSupplier] = useState({ name: "", phone: "", gst_number: "", address: "" });
-  const [form, setForm] = useState({
-    supplier_id: "",
-    bill_number: "",
-    bill_date: new Date().toISOString().slice(0, 10),
-    challan_number: "",
-    challan_date: "",
-    gst_number: "",
-    discount: "0",
-    cgst_rate: "9",
-    sgst_rate: "9",
-    notes: "",
-  });
-  const [lines, setLines] = useState<Line[]>([]);
+  const [cylindersCache, setCylindersCache] = useState<Map<number, { serial_number: string; type_id?: string }>>(new Map());
 
   const load = async () => {
     const { data } = await (supabase
       .from("purchases") as any)
       .select("*, suppliers(name, gst_number), purchase_items(serial_number, cylinder_number, fill_status)")
       .order("bill_date", { ascending: false });
-    setItems(data ?? []);
+    const scoped = (data ?? []).filter((p: any) => !p.company_id || p.company_id === company.id);
+    setItems(scoped);
+  };
+
+  const loadCylindersCache = async () => {
+    const { data } = await (supabase.from("cylinders") as any).select("cylinder_number, serial_number, type_id, company_id");
+    const map = new Map<number, { serial_number: string; type_id?: string }>();
+    if (data) {
+      for (const c of data) {
+        if ((!c.company_id || c.company_id === company.id) && c.cylinder_number && c.serial_number) {
+          map.set(Number(c.cylinder_number), { serial_number: c.serial_number, type_id: c.type_id });
+        }
+      }
+    }
+    setCylindersCache(map);
   };
 
   useEffect(() => {
     load();
+    loadCylindersCache();
     supabase.from("suppliers").select("*").order("name").then(({ data }) => setSuppliers(data ?? []));
     supabase.from("cylinder_types").select("*").then(({ data }) => setTypes(data ?? []));
-  }, []);
+  }, [company.id]);
 
   useEffect(() => {
     const s = suppliers.find((x) => x.id === form.supplier_id);
@@ -63,7 +113,7 @@ export default function Purchases() {
   }, [form.supplier_id, suppliers]);
 
   const totals = useMemo(() => {
-    const subtotal = lines.reduce((a, l) => a + Number(l.quantity || 0) * Number(l.rate || 0), 0);
+    const subtotal = lines.reduce((a, l) => a + Number(l.rate || 0), 0);
     const discount = Number(form.discount) || 0;
     const taxable = Math.max(0, subtotal - discount);
     const cgst = (taxable * (Number(form.cgst_rate) || 0)) / 100;
@@ -71,28 +121,51 @@ export default function Purchases() {
     const gross = taxable + cgst + sgst;
     const total = Math.round(gross);
     const roundoff = +(total - gross).toFixed(2);
-    return { subtotal, discount, taxable, cgst, sgst, total, roundoff };
+
+    let paid = total;
+    if (form.payment_status === "unpaid") {
+      paid = 0;
+    } else if (form.payment_status === "partial") {
+      paid = Math.min(total, Math.max(0, Number(form.amount_paid) || 0));
+    }
+    const balance = Math.max(0, total - paid);
+
+    return { subtotal, discount, taxable, cgst, sgst, total, roundoff, paid, balance };
   }, [lines, form]);
 
   const resetForm = () => {
+    const today = new Date().toISOString().slice(0, 10);
     setForm({
       supplier_id: "", bill_number: "",
-      bill_date: new Date().toISOString().slice(0, 10),
+      bill_date: today, payment_date: today,
       challan_number: "", challan_date: "", gst_number: "",
-      discount: "0", cgst_rate: "9", sgst_rate: "9", notes: "",
+      discount: "0", cgst_rate: "9", sgst_rate: "9",
+      payment_status: "paid", amount_paid: "0", payment_method: "Cash", notes: "",
     });
     setLines([]);
   };
 
   const addLine = () => setLines([...lines, {
-    cylinder_number: "", serial_number: "", type_id: "", hsn_code: "",
-    quantity: 1, rate: 0, fill_status: "filled",
+    cylinder_number: "", serial_number: "", type_id: types[0]?.id ?? "", hsn_code: "",
+    rate: 0, fill_status: "filled",
   }]);
 
   const updateLine = (idx: number, patch: Partial<Line>) => {
     setLines((curr) => curr.map((l, i) => {
       if (i !== idx) return l;
       const merged = { ...l, ...patch };
+
+      if (patch.cylinder_number !== undefined) {
+        const cNum = parseInt(patch.cylinder_number.trim(), 10);
+        if (!isNaN(cNum) && cylindersCache.has(cNum)) {
+          const cached = cylindersCache.get(cNum)!;
+          merged.serial_number = cached.serial_number;
+          if (!merged.type_id && cached.type_id) {
+            merged.type_id = cached.type_id;
+          }
+        }
+      }
+
       if (patch.type_id) {
         const t = types.find((x) => x.id === patch.type_id);
         if (t) {
@@ -130,7 +203,22 @@ export default function Purchases() {
       if (!l.serial_number.trim() && !l.cylinder_number.trim()) return toast.error("Each line needs a serial number or cylinder number");
     }
 
-    const payload = {
+    const initialPayments: PaymentInstallment[] = [];
+    if (totals.paid > 0) {
+      initialPayments.push({
+        id: `p-${Date.now()}-1`,
+        date: form.payment_date || form.bill_date,
+        amount: totals.paid,
+        method: form.payment_method || "Cash",
+        notes: form.payment_status === "partial" ? "1st Partial Payment" : "Full Payment",
+      });
+    }
+
+    const cleanNotes = form.notes.trim();
+    const paymentsJson = `__PAYMENTS__:${JSON.stringify(initialPayments)}__END_PAYMENTS__`;
+    const formattedNotes = cleanNotes ? `${cleanNotes}\n${paymentsJson}` : paymentsJson;
+
+    const payload: any = {
       supplier_id: form.supplier_id,
       bill_number: form.bill_number || null,
       bill_date: form.bill_date,
@@ -145,21 +233,42 @@ export default function Purchases() {
       sgst_amount: totals.sgst,
       roundoff: totals.roundoff,
       total: totals.total,
-      notes: form.notes.trim() || null,
+      notes: formattedNotes,
+      payment_status: totals.balance === 0 ? "paid" : totals.paid > 0 ? "partial" : "unpaid",
+      amount_paid: totals.paid,
+      balance_amount: totals.balance,
+      payment_date: totals.paid > 0 ? (form.payment_date || form.bill_date) : null,
+      payments: initialPayments,
     };
-    const { data: pur, error } = await supabase.from("purchases").insert(payload).select().single();
-    if (error || !pur) return toast.error(error?.message ?? "Failed");
+
+    let { data: pur, error } = await supabase.from("purchases").insert(payload).select().single();
+    if (error && error.message.includes("column")) {
+      delete payload.payment_status;
+      delete payload.amount_paid;
+      delete payload.balance_amount;
+      delete payload.payment_date;
+      delete payload.payments;
+      const res = await supabase.from("purchases").insert(payload).select().single();
+      pur = res.data;
+      error = res.error;
+    }
+
+    if (error || !pur) return toast.error(error?.message ?? "Failed to save purchase");
 
     const cgstRate = Number(form.cgst_rate) || 0;
     const sgstRate = Number(form.sgst_rate) || 0;
     const itemRows = [];
+    const newCache = new Map(cylindersCache);
 
     for (const l of lines) {
       const cylNum = l.cylinder_number.trim() ? parseInt(l.cylinder_number.trim(), 10) : null;
       const serialNum = l.serial_number.trim() || (cylNum ? `CYL-${String(cylNum).padStart(4, "0")}` : "");
 
+      if (cylNum && serialNum) {
+        newCache.set(cylNum, { serial_number: serialNum, type_id: l.type_id });
+      }
+
       let cylinderId: string | null = null;
-      // Try to find by cylinder_number first, then by serial
       if (cylNum) {
         const { data: existing } = await (supabase.from("cylinders") as any).select("id").eq("cylinder_number", cylNum).maybeSingle();
         if (existing) {
@@ -199,7 +308,7 @@ export default function Purchases() {
         }
       }
 
-      const taxable = Number(l.quantity) * Number(l.rate);
+      const taxable = Number(l.rate);
       const cg = (taxable * cgstRate) / 100;
       const sg = (taxable * sgstRate) / 100;
       itemRows.push({
@@ -209,7 +318,7 @@ export default function Purchases() {
         serial_number: serialNum,
         cylinder_number: cylNum,
         hsn_code: l.hsn_code || null,
-        quantity: l.quantity,
+        quantity: 1,
         rate: l.rate,
         taxable,
         cgst_amount: cg,
@@ -218,11 +327,81 @@ export default function Purchases() {
         fill_status: l.fill_status,
       });
     }
+
     if (itemRows.length) await supabase.from("purchase_items").insert(itemRows);
+    setCylindersCache(newCache);
 
     toast.success(`Purchase recorded — ${itemRows.length} cylinder(s) added to stock`);
     setOpen(false);
     resetForm();
+    load();
+  };
+
+  const openPaymentModal = (item: any) => {
+    const history = getPaymentHistory(item);
+    setPayModalItem(item);
+    setPayDate(new Date().toISOString().slice(0, 10));
+    setPayAmount(String(history.balance));
+    setPayMethod("UPI / GPay / PhonePe");
+    setPayNotes("2nd Half Payment / Final Settlement");
+  };
+
+  const savePaymentInstallment = async () => {
+    if (!payModalItem) return;
+    const amt = Number(payAmount);
+    if (!amt || amt <= 0) return toast.error("Enter valid payment amount");
+
+    const history = getPaymentHistory(payModalItem);
+    if (amt > history.balance) {
+      return toast.error(`Amount cannot exceed remaining balance of ₹${history.balance.toLocaleString()}`);
+    }
+
+    const isFinalHalf = amt >= history.balance;
+    const newInstallment: PaymentInstallment = {
+      id: `p-${Date.now()}`,
+      date: payDate,
+      amount: amt,
+      method: payMethod,
+      notes: payNotes.trim() || (isFinalHalf ? "2nd Half / Final Payment" : "Partial Payment"),
+    };
+
+    const updatedPayments = [...history.payments, newInstallment];
+    const newPaid = updatedPayments.reduce((s, it) => s + Number(it.amount), 0);
+    const totalBill = Number(payModalItem.total || 0);
+    const newBalance = Math.max(0, totalBill - newPaid);
+    const newStatus: PaymentStatus = newBalance === 0 ? "paid" : "partial";
+
+    const cleanNotes = payModalItem.notes ? payModalItem.notes.split("__PAYMENTS__:")[0].trim() : "";
+    const paymentsJson = `__PAYMENTS__:${JSON.stringify(updatedPayments)}__END_PAYMENTS__`;
+    const formattedNotes = cleanNotes ? `${cleanNotes}\n${paymentsJson}` : paymentsJson;
+
+    const payload: any = {
+      notes: formattedNotes,
+      payment_status: newStatus,
+      amount_paid: newPaid,
+      balance_amount: newBalance,
+      payment_date: payDate,
+      payments: updatedPayments,
+    };
+
+    let { error } = await supabase.from("purchases").update(payload).eq("id", payModalItem.id);
+    if (error && error.message.includes("column")) {
+      delete payload.payment_status;
+      delete payload.amount_paid;
+      delete payload.balance_amount;
+      delete payload.payment_date;
+      delete payload.payments;
+      const res = await supabase.from("purchases").update(payload).eq("id", payModalItem.id);
+      error = res.error;
+    }
+
+    if (error) return toast.error(error.message);
+
+    toast.success(`2nd Half payment of ₹${amt.toLocaleString()} recorded on ${new Date(payDate).toLocaleDateString()}`);
+    setPayModalItem(null);
+    if (viewing && viewing.id === payModalItem.id) {
+      setViewing({ ...viewing, notes: formattedNotes, payments: updatedPayments });
+    }
     load();
   };
 
@@ -232,23 +411,35 @@ export default function Purchases() {
   };
 
   const totalSpend = items.reduce((a, b) => a + Number(b.total), 0);
-
-  // Fill status counts across all purchases
-  const filledCount = items.reduce((a, p) => a + (p.purchase_items ?? []).filter((i: any) => i.fill_status === "filled").length, 0);
-  const emptyCount = items.reduce((a, p) => a + (p.purchase_items ?? []).filter((i: any) => i.fill_status === "empty").length, 0);
+  const totalPaid = items.reduce((a, b) => a + getPaymentHistory(b).paid, 0);
+  const totalBalance = items.reduce((a, b) => a + getPaymentHistory(b).balance, 0);
 
   return (
     <div className="space-y-6">
+      {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <Card className="p-5 bg-card border-border/60"><div className="text-xs uppercase tracking-widest text-muted-foreground">Total Spend</div><div className="text-2xl font-bold mt-2 font-mono">₹{totalSpend.toLocaleString()}</div></Card>
-        <Card className="p-5 bg-card border-border/60"><div className="text-xs uppercase tracking-widest text-muted-foreground">Purchase Bills</div><div className="text-2xl font-bold mt-2 font-mono">{items.length}</div></Card>
         <Card className="p-5 bg-card border-border/60">
-          <div className="text-xs uppercase tracking-widest text-muted-foreground">Filled Cylinders</div>
-          <div className="text-2xl font-bold mt-2 font-mono text-success flex items-center gap-2"><Flame className="h-5 w-5" />{filledCount}</div>
+          <div className="text-xs uppercase tracking-widest text-muted-foreground">Total Spend</div>
+          <div className="text-2xl font-bold mt-2 font-mono">₹{totalSpend.toLocaleString()}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">{items.length} purchase bills</div>
         </Card>
         <Card className="p-5 bg-card border-border/60">
-          <div className="text-xs uppercase tracking-widest text-muted-foreground">Empty Cylinders</div>
-          <div className="text-2xl font-bold mt-2 font-mono text-muted-foreground flex items-center gap-2"><Circle className="h-5 w-5" />{emptyCount}</div>
+          <div className="text-xs uppercase tracking-widest text-muted-foreground flex items-center gap-1.5 text-emerald-400">
+            <CheckCircle2 className="h-4 w-4" /> Amount Paid
+          </div>
+          <div className="text-2xl font-bold mt-2 font-mono text-emerald-400">₹{totalPaid.toLocaleString()}</div>
+        </Card>
+        <Card className="p-5 bg-card border-border/60">
+          <div className="text-xs uppercase tracking-widest text-muted-foreground flex items-center gap-1.5 text-amber-400">
+            <Clock className="h-4 w-4" /> Balance Due
+          </div>
+          <div className="text-2xl font-bold mt-2 font-mono text-amber-400">₹{totalBalance.toLocaleString()}</div>
+        </Card>
+        <Card className="p-5 bg-card border-border/60">
+          <div className="text-xs uppercase tracking-widest text-muted-foreground">Purchased Cylinders</div>
+          <div className="text-2xl font-bold mt-2 font-mono text-primary">
+            {items.reduce((a, b) => a + (b.purchase_items ?? []).length, 0)}
+          </div>
         </Card>
       </div>
 
@@ -301,29 +492,26 @@ export default function Purchases() {
                 {/* Cylinder lines */}
                 <div>
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
-                    <Label>Cylinders (number + fill status)</Label>
+                    <Label className="text-sm font-bold">Cylinders (Serial auto-fills for known cylinder #)</Label>
                     <Button size="sm" variant="outline" onClick={addLine}><Plus className="h-3 w-3 mr-1" />Add cylinder</Button>
                   </div>
                   <div className="space-y-2">
                     {lines.map((l, i) => (
-                      <div key={i} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end p-3 rounded border border-border/40 bg-secondary/30">
-                        {/* Cylinder Number */}
-                        <div className="sm:col-span-2">
-                          <Label className="text-[10px]">Cyl # (1–2000)</Label>
+                      <div key={i} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end p-3 rounded-lg border border-border/60 bg-secondary/30">
+                        <div className="sm:col-span-3">
+                          <Label className="text-[10px]">Cyl #</Label>
                           <Input
-                            type="number" min={1} max={2000}
+                            type="number" min={1}
                             value={l.cylinder_number}
                             onChange={(e) => updateLine(i, { cylinder_number: e.target.value })}
                             placeholder="e.g. 42"
                             className="font-mono"
                           />
                         </div>
-                        {/* Serial number */}
-                        <div className="sm:col-span-2">
-                          <Label className="text-[10px]">Serial # (opt.)</Label>
+                        <div className="sm:col-span-3">
+                          <Label className="text-[10px]">Serial # (Auto-filled)</Label>
                           <Input value={l.serial_number} onChange={(e) => updateLine(i, { serial_number: e.target.value })} placeholder="CYL-..." />
                         </div>
-                        {/* Type */}
                         <div className="sm:col-span-2">
                           <Label className="text-[10px]">Type</Label>
                           <Select value={l.type_id} onValueChange={(v) => updateLine(i, { type_id: v })}>
@@ -331,23 +519,17 @@ export default function Purchases() {
                             <SelectContent>{types.map((t) => <SelectItem key={t.id} value={t.id}>{t.code} — {t.name}</SelectItem>)}</SelectContent>
                           </Select>
                         </div>
-                        {/* HSN */}
-                        <div className="sm:col-span-1"><Label className="text-[10px]">HSN</Label><Input value={l.hsn_code} onChange={(e) => updateLine(i, { hsn_code: e.target.value })} /></div>
-                        {/* Qty */}
-                        <div className="sm:col-span-1"><Label className="text-[10px]">Qty</Label><Input type="number" value={l.quantity} onChange={(e) => updateLine(i, { quantity: Number(e.target.value) })} /></div>
-                        {/* Rate */}
                         <div className="sm:col-span-1"><Label className="text-[10px]">Rate ₹</Label><Input type="number" value={l.rate} onChange={(e) => updateLine(i, { rate: Number(e.target.value) })} /></div>
-                        {/* Fill status toggle */}
                         <div className="sm:col-span-2">
                           <Label className="text-[10px]">Fill Status</Label>
                           <div className="flex rounded-md border border-border/60 overflow-hidden">
                             <button
                               type="button"
                               onClick={() => updateLine(i, { fill_status: "filled" })}
-                              className={`flex-1 flex items-center justify-center gap-1 py-2 text-[10px] font-bold transition-colors ${
+                              className={`flex-1 flex items-center justify-center gap-1 py-2 text-[10px] font-extrabold transition-all ${
                                 l.fill_status === "filled"
-                                  ? "bg-success text-success-foreground"
-                                  : "bg-secondary/50 text-muted-foreground hover:bg-secondary"
+                                  ? "bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-500"
+                                  : "bg-secondary/40 text-muted-foreground hover:bg-emerald-950/40 hover:text-emerald-400"
                               }`}
                             >
                               <Flame className="h-3 w-3" /> Filled
@@ -355,50 +537,130 @@ export default function Purchases() {
                             <button
                               type="button"
                               onClick={() => updateLine(i, { fill_status: "empty" })}
-                              className={`flex-1 flex items-center justify-center gap-1 py-2 text-[10px] font-bold transition-colors ${
+                              className={`flex-1 flex items-center justify-center gap-1 py-2 text-[10px] font-extrabold transition-all ${
                                 l.fill_status === "empty"
-                                  ? "bg-muted text-foreground"
-                                  : "bg-secondary/50 text-muted-foreground hover:bg-secondary"
+                                  ? "bg-amber-600 text-white shadow-sm ring-1 ring-amber-500"
+                                  : "bg-secondary/40 text-muted-foreground hover:bg-amber-950/40 hover:text-amber-400"
                               }`}
                             >
                               <Circle className="h-3 w-3" /> Empty
                             </button>
                           </div>
                         </div>
-                        {/* Remove */}
                         <div className="sm:col-span-1"><Button variant="ghost" size="icon" onClick={() => removeLine(i)}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>
                       </div>
                     ))}
-                    {lines.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">No cylinders. Click "Add cylinder".</p>}
+                    {lines.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">No cylinders added yet. Click "Add cylinder".</p>}
+                  </div>
+                </div>
+
+                {/* Initial Payment Setup */}
+                <div className="p-4 rounded-lg bg-card border border-border/80 space-y-3">
+                  <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Initial Payment Setup</Label>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    <div>
+                      <Label className="text-xs">Payment Status</Label>
+                      <Select
+                        value={form.payment_status}
+                        onValueChange={(v: PaymentStatus) => {
+                          setForm((f) => ({
+                            ...f,
+                            payment_status: v,
+                            amount_paid: v === "paid" ? String(totals.total) : v === "unpaid" ? "0" : f.amount_paid,
+                          }));
+                        }}
+                      >
+                        <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="paid">Fully Paid</SelectItem>
+                          <SelectItem value="partial">Partial Paid (1st Half)</SelectItem>
+                          <SelectItem value="unpaid">Unpaid</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <Label className="text-xs flex items-center gap-1">
+                        <Calendar className="h-3 w-3 text-amber-400" /> 1st Half Paid Date
+                      </Label>
+                      <Input
+                        type="date"
+                        disabled={form.payment_status === "unpaid"}
+                        value={form.payment_date}
+                        onChange={(e) => setForm({ ...form, payment_date: e.target.value })}
+                        className="mt-1"
+                      />
+                    </div>
+
+                    <div>
+                      <Label className="text-xs">1st Half Amount Paid (₹)</Label>
+                      <Input
+                        type="number"
+                        disabled={form.payment_status === "paid" || form.payment_status === "unpaid"}
+                        value={form.payment_status === "paid" ? totals.total : form.payment_status === "unpaid" ? 0 : form.amount_paid}
+                        onChange={(e) => setForm({ ...form, amount_paid: e.target.value })}
+                        className="mt-1 font-mono font-bold text-amber-400"
+                      />
+                    </div>
+
+                    <div>
+                      <Label className="text-xs">Payment Method</Label>
+                      <Select
+                        value={form.payment_method}
+                        onValueChange={(v) => setForm({ ...form, payment_method: v })}
+                      >
+                        <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Cash">Cash</SelectItem>
+                          <SelectItem value="UPI / GPay / PhonePe">UPI / GPay / PhonePe</SelectItem>
+                          <SelectItem value="Bank Transfer / NEFT">Bank Transfer / NEFT</SelectItem>
+                          <SelectItem value="Cheque">Cheque</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
 
-                  {/* Fill status summary */}
-                  {lines.length > 0 && (
-                    <div className="mt-2 flex gap-4 text-xs font-semibold">
-                      <span className="text-success"><Flame className="h-3 w-3 inline mr-1" />Filled: {lines.filter((l) => l.fill_status === "filled").length}</span>
-                      <span className="text-muted-foreground"><Circle className="h-3 w-3 inline mr-1" />Empty: {lines.filter((l) => l.fill_status === "empty").length}</span>
+                  {form.payment_status === "partial" && (
+                    <div className="p-3 rounded-md bg-amber-950/20 border border-amber-500/30 flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <Clock className="h-4 w-4 text-amber-400" />
+                        <span className="font-semibold text-amber-300">2nd Half Balance Due: <b>₹{totals.balance.toLocaleString()}</b></span>
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">Record 2nd Half payment anytime with date selection in the table!</span>
                     </div>
                   )}
                 </div>
 
-                <div className="p-4 rounded bg-secondary/50 space-y-1 font-mono text-sm">
+                {/* Totals Summary */}
+                <div className="p-4 rounded-lg bg-secondary/50 space-y-1.5 font-mono text-sm">
                   <Row k="Subtotal" v={totals.subtotal} />
                   <Row k="Discount" v={-totals.discount} />
                   <Row k="Taxable" v={totals.taxable} bold />
                   <Row k={`CGST @ ${form.cgst_rate}%`} v={totals.cgst} />
                   <Row k={`SGST @ ${form.sgst_rate}%`} v={totals.sgst} />
                   <Row k="Round off" v={totals.roundoff} />
-                  <div className="border-t border-border/60 mt-2 pt-2"><Row k="TOTAL" v={totals.total} bold big /></div>
+                  <div className="border-t border-border/60 mt-2 pt-2">
+                    <Row k="TOTAL BILL" v={totals.total} bold big />
+                  </div>
+                  <div className="flex justify-between text-xs pt-1 text-amber-400 font-semibold">
+                    <span>1st Half Paid</span>
+                    <span>₹{totals.paid.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-purple-300 font-semibold">
+                    <span>2nd Half Remaining</span>
+                    <span>₹{totals.balance.toLocaleString()}</span>
+                  </div>
                 </div>
-                <div><Label>Notes</Label><Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
-                <Button onClick={save} className="w-full">Save purchase</Button>
+
+                <div><Label>Notes</Label><Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Additional notes..." /></div>
+                <Button onClick={save} className="w-full h-11 text-sm font-bold uppercase tracking-wider">Save purchase bill</Button>
               </div>
             </DialogContent>
           </Dialog>
         </div>
       </div>
 
-      {/* Purchase list table */}
+      {/* Purchase list table with Paid Dates (1st / 2nd Half) */}
       <Card className="bg-card border-border/60 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -406,21 +668,25 @@ export default function Purchases() {
               <tr>
                 <th className="text-left px-4 py-3">Purchase #</th>
                 <th className="text-left px-4 py-3">Bill / Challan</th>
-                <th className="text-left px-4 py-3">Date</th>
+                <th className="text-left px-4 py-3">Bill Date</th>
                 <th className="text-left px-4 py-3">Supplier</th>
                 <th className="text-left px-4 py-3">Cylinder #s</th>
-                <th className="text-right px-4 py-3">Filled</th>
-                <th className="text-right px-4 py-3">Empty</th>
-                <th className="text-right px-4 py-3">Total</th>
+                <th className="text-center px-4 py-3">Payment Status</th>
+                <th className="text-center px-4 py-3">Paid Dates (1st & 2nd Half)</th>
+                <th className="text-right px-4 py-3">Bill Total</th>
+                <th className="text-right px-4 py-3">Total Paid</th>
+                <th className="text-right px-4 py-3">Balance</th>
                 <th className="text-right px-4 py-3">Actions</th>
               </tr>
             </thead>
             <tbody>
               {items.map((p) => {
                 const pItems: any[] = p.purchase_items ?? [];
-                const filled = pItems.filter((it) => it.fill_status === "filled").length;
-                const empty = pItems.filter((it) => it.fill_status === "empty").length;
                 const cylNums = pItems.map((it: any) => it.cylinder_number).filter(Boolean).sort((a: number, b: number) => a - b);
+                const history = getPaymentHistory(p);
+                const p1 = history.payments[0];
+                const p2 = history.payments.length > 1 ? history.payments[1] : null;
+
                 return (
                   <tr key={p.id} className="border-t border-border/40 hover:bg-secondary/30">
                     <td className="px-4 py-3 font-mono font-semibold text-primary">{p.purchase_number}</td>
@@ -440,93 +706,335 @@ export default function Purchases() {
                         {pItems.length === 0 && <span className="text-muted-foreground text-xs">—</span>}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-right font-mono">
-                      {filled > 0 ? <span className="text-success font-bold">{filled}</span> : <span className="text-muted-foreground">0</span>}
+                    <td className="px-4 py-3 text-center">
+                      {history.status === "paid" ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                          <CheckCircle2 className="h-3 w-3" /> Fully Paid
+                        </span>
+                      ) : history.status === "partial" ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                          <Clock className="h-3 w-3" /> Partial Paid
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-500/15 text-red-400 border border-red-500/30">
+                          <AlertCircle className="h-3 w-3" /> Unpaid
+                        </span>
+                      )}
                     </td>
-                    <td className="px-4 py-3 text-right font-mono">
-                      {empty > 0 ? <span className="text-muted-foreground font-bold">{empty}</span> : <span className="text-muted-foreground">0</span>}
+
+                    {/* Paid Dates Column with Color-coded 1st Half vs 2nd Half */}
+                    <td className="px-4 py-3 text-center font-mono text-xs">
+                      {history.payments.length === 0 ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        <div className="flex flex-col items-center gap-1">
+                          {/* 1st Payment Date (Amber Badge) */}
+                          {p1 && (
+                            <span className="inline-flex items-center gap-1 font-bold text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-md">
+                              <Calendar className="h-2.5 w-2.5 text-amber-400" />
+                              1st: {new Date(p1.date).toLocaleDateString()} (₹{p1.amount.toLocaleString()})
+                            </span>
+                          )}
+
+                          {/* 2nd / Final Payment Date (Vibrant Purple Badge) */}
+                          {p2 ? (
+                            <span className="inline-flex items-center gap-1 font-bold text-[10px] bg-purple-500/25 text-purple-200 border border-purple-400/50 px-2 py-0.5 rounded-md shadow-sm">
+                              <CheckCircle2 className="h-2.5 w-2.5 text-purple-300" />
+                              2nd: {new Date(p2.date).toLocaleDateString()} (₹{p2.amount.toLocaleString()})
+                            </span>
+                          ) : history.balance > 0 ? (
+                            /* Quick Clickable 2nd Half Pay Button directly inside cell */
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openPaymentModal(p)}
+                              className="h-6 px-2 text-[10px] font-extrabold border-purple-400/60 bg-purple-950/40 text-purple-200 hover:bg-purple-600 hover:text-white transition-all shadow-sm"
+                            >
+                              <Plus className="h-2.5 w-2.5 mr-0.5" />
+                              Pay 2nd Half (₹{history.balance.toLocaleString()})
+                            </Button>
+                          ) : null}
+                        </div>
+                      )}
                     </td>
+
                     <td className="px-4 py-3 text-right font-mono font-semibold">₹{Number(p.total).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-right"><Button size="sm" variant="ghost" onClick={() => viewDetails(p)}><Eye className="h-3 w-3" /></Button></td>
+                    <td className="px-4 py-3 text-right font-mono text-emerald-400 font-bold">₹{history.paid.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right font-mono font-bold">
+                      {history.balance > 0 ? (
+                        <span className="text-amber-400">₹{history.balance.toLocaleString()}</span>
+                      ) : (
+                        <span className="text-muted-foreground">₹0</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        {history.balance > 0 && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openPaymentModal(p)}
+                            className="h-8 px-2 text-[11px] font-bold border-purple-400/60 text-purple-300 bg-purple-950/20 hover:bg-purple-600 hover:text-white transition-all"
+                          >
+                            <Calendar className="h-3 w-3 mr-1 text-purple-300" />
+                            2nd Half
+                          </Button>
+                        )}
+                        <Button size="sm" variant="ghost" onClick={() => viewDetails(p)}><Eye className="h-4 w-4" /></Button>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
-              {items.length === 0 && <tr><td colSpan={9} className="text-center py-12 text-muted-foreground">No purchases yet.</td></tr>}
+              {items.length === 0 && <tr><td colSpan={11} className="text-center py-12 text-muted-foreground">No purchases recorded yet.</td></tr>}
             </tbody>
           </table>
         </div>
       </Card>
 
-      {/* Purchase detail dialog */}
-      <Dialog open={!!viewing} onOpenChange={(v) => !v && setViewing(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          {viewing && (
-            <div className="space-y-3">
-              <DialogHeader>
-                <DialogTitle>{viewing.purchase_number}</DialogTitle>
-              </DialogHeader>
-              <div className="text-xs space-y-1">
-                <div><b>Supplier:</b> {viewing.suppliers?.name}</div>
-                <div><b>Bill:</b> {viewing.bill_number ?? "—"} · {new Date(viewing.bill_date).toLocaleDateString()}</div>
-                {viewing.challan_number && <div><b>Challan:</b> {viewing.challan_number}{viewing.challan_date ? ` · ${new Date(viewing.challan_date).toLocaleDateString()}` : ""}</div>}
-              </div>
+      {/* Record 2nd Half Payment Installment Modal */}
+      <Dialog open={!!payModalItem} onOpenChange={(v) => !v && setPayModalItem(null)}>
+        <DialogContent className="max-w-md border-purple-500/40">
+          {payModalItem && (() => {
+            const history = getPaymentHistory(payModalItem);
 
-              {/* Fill status summary */}
-              <div className="flex gap-4">
-                <span className="text-xs font-semibold text-success">
-                  <Flame className="h-3 w-3 inline mr-1" />
-                  Filled: {(viewing.items ?? []).filter((it: any) => it.fill_status === "filled").length}
-                </span>
-                <span className="text-xs font-semibold text-muted-foreground">
-                  <Circle className="h-3 w-3 inline mr-1" />
-                  Empty: {(viewing.items ?? []).filter((it: any) => it.fill_status === "empty").length}
-                </span>
-              </div>
+            return (
+              <div className="space-y-4">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center justify-between">
+                    <span className="text-purple-300 flex items-center gap-1.5">
+                      <Calendar className="h-4 w-4" /> Record 2nd Half Payment
+                    </span>
+                    <span className="text-xs font-mono text-primary">{payModalItem.purchase_number}</span>
+                  </DialogTitle>
+                </DialogHeader>
 
-              <div className="border-t border-border/40 pt-2">
-                <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Cylinders</div>
-                <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead className="text-muted-foreground">
-                    <tr>
-                      <th className="text-left py-1">Cyl #</th>
-                      <th className="text-left py-1">Serial</th>
-                      <th className="text-left py-1">HSN</th>
-                      <th className="text-left py-1">Fill</th>
-                      <th className="text-right py-1">Qty</th>
-                      <th className="text-right py-1">Rate</th>
-                      <th className="text-right py-1">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(viewing.items ?? []).map((it: any) => (
-                      <tr key={it.id} className="border-t border-border/30">
-                        <td className="py-1 font-mono font-bold">{it.cylinder_number ? `#${it.cylinder_number}` : "—"}</td>
-                        <td className="py-1 font-mono">{it.serial_number}</td>
-                        <td className="py-1 font-mono">{it.hsn_code ?? "—"}</td>
-                        <td className="py-1">
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${it.fill_status === "filled" ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"}`}>
-                            {it.fill_status === "filled" ? "● Filled" : "○ Empty"}
-                          </span>
-                        </td>
-                        <td className="py-1 text-right font-mono">{it.quantity}</td>
-                        <td className="py-1 text-right font-mono">₹{Number(it.rate).toLocaleString()}</td>
-                        <td className="py-1 text-right font-mono">₹{Number(it.total).toLocaleString()}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="p-3.5 rounded-lg bg-secondary/60 space-y-1.5 text-xs font-mono border border-border/60">
+                  <div className="flex justify-between"><span>Total Bill Amount:</span><b>₹{Number(payModalItem.total).toLocaleString()}</b></div>
+                  <div className="flex justify-between text-amber-400">
+                    <span>1st Half Paid ({history.firstPayDate ? new Date(history.firstPayDate).toLocaleDateString() : "Initial"}):</span>
+                    <b>₹{history.paid.toLocaleString()}</b>
+                  </div>
+                  <div className="flex justify-between text-purple-300 font-bold border-t border-border/40 pt-1.5 mt-1 text-sm">
+                    <span>2nd Half Remaining Balance:</span><b>₹{history.balance.toLocaleString()}</b>
+                  </div>
                 </div>
+
+                <div className="space-y-3">
+                  {/* 2nd Half Payment Date Calendar Picker */}
+                  <div>
+                    <Label className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
+                      <Calendar className="h-3.5 w-3.5 text-purple-400" />
+                      2nd Half Payment Date (Calendar)
+                    </Label>
+                    <Input
+                      type="date"
+                      value={payDate}
+                      onChange={(e) => setPayDate(e.target.value)}
+                      className="mt-1 border-purple-500/40 focus:border-purple-400 font-mono font-bold"
+                    />
+                  </div>
+
+                  {/* 2nd Half Payment Amount */}
+                  <div>
+                    <Label className="text-xs font-bold flex items-center gap-1.5">
+                      <DollarSign className="h-3.5 w-3.5 text-emerald-400" />
+                      2nd Half Payment Amount (₹)
+                    </Label>
+                    <Input
+                      type="number"
+                      max={history.balance}
+                      value={payAmount}
+                      onChange={(e) => setPayAmount(e.target.value)}
+                      placeholder={`Max ₹${history.balance}`}
+                      className="mt-1 font-mono font-bold text-base"
+                    />
+                  </div>
+
+                  {/* Payment Method */}
+                  <div>
+                    <Label className="text-xs font-semibold flex items-center gap-1.5">
+                      <CreditCard className="h-3.5 w-3.5 text-primary" />
+                      Payment Method
+                    </Label>
+                    <Select value={payMethod} onValueChange={setPayMethod}>
+                      <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="UPI / GPay / PhonePe">UPI / GPay / PhonePe</SelectItem>
+                        <SelectItem value="Cash">Cash</SelectItem>
+                        <SelectItem value="Bank Transfer / NEFT">Bank Transfer / NEFT</SelectItem>
+                        <SelectItem value="Cheque">Cheque</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Payment Notes */}
+                  <div>
+                    <Label className="text-xs font-semibold">Notes / Reference</Label>
+                    <Input
+                      value={payNotes}
+                      onChange={(e) => setPayNotes(e.target.value)}
+                      placeholder="e.g. 2nd half payment via GPay"
+                      className="mt-1 text-xs"
+                    />
+                  </div>
+                </div>
+
+                <Button onClick={savePaymentInstallment} className="w-full h-11 font-extrabold uppercase tracking-wider bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-md">
+                  Confirm & Save 2nd Half Payment
+                </Button>
               </div>
-              <div className="p-3 rounded bg-secondary/50 space-y-1 font-mono text-sm">
-                <Row k="Taxable" v={Number(viewing.taxable_amount)} />
-                <Row k={`CGST @ ${viewing.cgst_rate}%`} v={Number(viewing.cgst_amount)} />
-                <Row k={`SGST @ ${viewing.sgst_rate}%`} v={Number(viewing.sgst_amount)} />
-                <Row k="Round off" v={Number(viewing.roundoff)} />
-                <div className="border-t border-border/60 mt-2 pt-2"><Row k="TOTAL" v={Number(viewing.total)} bold big /></div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* Purchase detail dialog with Color-Coded 1st and 2nd Payment Breakdown */}
+      <Dialog open={!!viewing} onOpenChange={(v) => !v && setViewing(null)}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          {viewing && (() => {
+            const history = getPaymentHistory(viewing);
+            const cleanNotes = viewing.notes ? viewing.notes.split("__PAYMENTS__:")[0].trim() : "";
+
+            return (
+              <div className="space-y-5">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center justify-between">
+                    <span>{viewing.purchase_number}</span>
+                    {history.status === "paid" ? (
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">Fully Paid</span>
+                    ) : history.status === "partial" ? (
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">Partial Paid</span>
+                    ) : (
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-red-500/15 text-red-400 border border-red-500/30">Unpaid</span>
+                    )}
+                  </DialogTitle>
+                </DialogHeader>
+
+                <div className="grid grid-cols-2 gap-2 text-xs border-b border-border/40 pb-3">
+                  <div><b>Supplier:</b> {viewing.suppliers?.name}</div>
+                  <div><b>Bill Date:</b> {new Date(viewing.bill_date).toLocaleDateString()}</div>
+                  <div><b>Bill #:</b> {viewing.bill_number ?? "—"}</div>
+                  <div><b>Challan #:</b> {viewing.challan_number ?? "—"}</div>
+                </div>
+
+                {/* Color-Coded 1st & 2nd Payment Installments Breakdown */}
+                <div className="p-4 rounded-lg bg-card border border-border/80 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <Calendar className="h-4 w-4 text-primary" />
+                      Payment History & Dates ({history.payments.length} entries)
+                    </Label>
+                    {history.balance > 0 && (
+                      <Button
+                        size="sm"
+                        onClick={() => openPaymentModal(viewing)}
+                        className="h-7 px-3 text-xs font-extrabold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white"
+                      >
+                        + Pay 2nd Half (₹{history.balance.toLocaleString()})
+                      </Button>
+                    )}
+                  </div>
+
+                  {history.payments.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-3">No payments recorded yet.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {history.payments.map((p, idx) => {
+                        const isSecondHalf = idx >= 1;
+                        return (
+                          <div
+                            key={p.id || idx}
+                            className={`flex items-center justify-between p-3 rounded-lg border text-xs transition-all ${
+                              isSecondHalf
+                                ? "bg-purple-950/30 border-purple-500/40 text-purple-200"
+                                : "bg-amber-950/20 border-amber-500/30 text-amber-300"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div
+                                className={`h-8 w-8 rounded-full flex items-center justify-center font-extrabold text-xs shrink-0 ${
+                                  isSecondHalf ? "bg-purple-500/30 text-purple-200" : "bg-amber-500/30 text-amber-300"
+                                }`}
+                              >
+                                {isSecondHalf ? "2nd" : "1st"}
+                              </div>
+                              <div>
+                                <div className="font-bold flex items-center gap-2">
+                                  <span className="font-mono">{new Date(p.date).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</span>
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-background/60">{p.method}</span>
+                                </div>
+                                {p.notes && <div className="text-[11px] opacity-80 mt-0.5">{p.notes}</div>}
+                              </div>
+                            </div>
+                            <div className="font-mono font-extrabold text-sm">
+                              +₹{Number(p.amount).toLocaleString()}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Cylinder items */}
+                <div className="border-t border-border/40 pt-2">
+                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-2">Purchased Cylinders</div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="text-muted-foreground border-b border-border/30">
+                        <tr>
+                          <th className="text-left py-1.5">Cyl #</th>
+                          <th className="text-left py-1.5">Serial</th>
+                          <th className="text-left py-1.5">Fill Status</th>
+                          <th className="text-right py-1.5">Rate</th>
+                          <th className="text-right py-1.5">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(viewing.items ?? []).map((it: any) => (
+                          <tr key={it.id} className="border-t border-border/30">
+                            <td className="py-2 font-mono font-bold text-primary">{it.cylinder_number ? `#${it.cylinder_number}` : "—"}</td>
+                            <td className="py-2 font-mono text-muted-foreground">{it.serial_number}</td>
+                            <td className="py-2">
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${it.fill_status === "filled" ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400"}`}>
+                                {it.fill_status === "filled" ? "Filled" : "Empty"}
+                              </span>
+                            </td>
+                            <td className="py-2 text-right font-mono">₹{Number(it.rate).toLocaleString()}</td>
+                            <td className="py-2 text-right font-mono font-bold">₹{Number(it.total).toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Financial Summary */}
+                <div className="p-4 rounded-lg bg-secondary/50 space-y-1.5 font-mono text-sm">
+                  <Row k="Taxable Amount" v={Number(viewing.taxable_amount)} />
+                  <Row k={`CGST @ ${viewing.cgst_rate}%`} v={Number(viewing.cgst_amount)} />
+                  <Row k={`SGST @ ${viewing.sgst_rate}%`} v={Number(viewing.sgst_amount)} />
+                  <Row k="Round off" v={Number(viewing.roundoff)} />
+                  <div className="border-t border-border/60 mt-2 pt-2"><Row k="TOTAL BILL" v={Number(viewing.total)} bold big /></div>
+                  <div className="flex justify-between text-xs pt-1 text-emerald-400 font-bold">
+                    <span>Total Paid So Far</span>
+                    <span>₹{history.paid.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-amber-400 font-bold">
+                    <span>Balance Remaining</span>
+                    <span>₹{history.balance.toLocaleString()}</span>
+                  </div>
+                </div>
+
+                {cleanNotes && (
+                  <div className="text-xs bg-muted/40 p-3 rounded-md border border-border/40">
+                    <span className="font-bold">Notes: </span> {cleanNotes}
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            );
+          })()}
         </DialogContent>
       </Dialog>
     </div>

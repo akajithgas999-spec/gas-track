@@ -10,9 +10,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ArrowDown, ArrowUp, Plus, PackagePlus } from "lucide-react";
 import { toast } from "sonner";
 
+import { useCompany } from "@/hooks/useCompany";
+
 const TYPE_LABEL: Record<string, string> = { issue: "Issue", return: "Return", incoming: "Incoming Stock" };
 
 export default function Transactions() {
+  const { company } = useCompany();
   const [items, setItems] = useState<any[]>([]);
   const [cylinders, setCylinders] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
@@ -32,17 +35,20 @@ export default function Transactions() {
       .select("*, cylinders(serial_number), customers(name), cylinder_types(code,name,price)")
       .order("occurred_at", { ascending: false })
       .limit(200);
-    setItems(data ?? []);
+    const scoped = (data ?? []).filter((t: any) => !t.company_id || t.company_id === company.id);
+    setItems(scoped);
   };
   const loadRefs = async () => {
     const [{ data: cyl }, { data: cust }] = await Promise.all([
-      supabase.from("cylinders").select("id, serial_number, type_id, status, cylinder_types(code,price)").order("serial_number"),
-      supabase.from("customers").select("id, name").order("name"),
+      supabase.from("cylinders").select("id, serial_number, type_id, status, company_id, cylinder_types(code,price)").order("serial_number"),
+      supabase.from("customers").select("id, name, company_id").order("name"),
     ]);
-    setCylinders(cyl ?? []);
-    setCustomers(cust ?? []);
+    const scopedCyl = (cyl ?? []).filter((c: any) => !c.company_id || c.company_id === company.id);
+    const scopedCust = (cust ?? []).filter((c: any) => !c.company_id || c.company_id === company.id);
+    setCylinders(scopedCyl);
+    setCustomers(scopedCust);
   };
-  useEffect(() => { load(); loadRefs(); }, []);
+  useEffect(() => { load(); loadRefs(); }, [company.id]);
 
   const onPickCylinder = (id: string) => {
     const c = cylinders.find((x) => x.id === id);
@@ -68,6 +74,7 @@ export default function Transactions() {
       type_id: cyl.type_id,
       amount: Number(form.amount) || 0,
       notes: form.notes.trim() || null,
+      company_id: company.id,
     };
     const { data: txn, error } = await supabase.from("transactions").insert(txnPayload).select().single();
     if (error) return toast.error(error.message);
@@ -84,6 +91,7 @@ export default function Transactions() {
         transaction_id: txn.id,
         amount: Number(form.amount),
         status: "pending",
+        company_id: company.id,
       });
     }
 

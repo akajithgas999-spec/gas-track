@@ -12,15 +12,18 @@ import { toast } from "sonner";
 
 const OVERDUE_DAYS = 30;
 
+import { useCompany } from "@/hooks/useCompany";
+
 export default function Customers() {
+  const { company } = useCompany();
   const [items, setItems] = useState<any[]>([]);
   const [overdueByCustomer, setOverdueByCustomer] = useState<Record<string, number>>({});
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<any | null>(null);
+  const [viewing, setViewing] = useState<any | null>(null);
   const [form, setForm] = useState({ name: "", phone: "", email: "", gst_number: "", address: "", notes: "", initial_deposit: "0", deposit_notes: "" });
 
-  // Deposit dialog
   const [depOpen, setDepOpen] = useState(false);
   const [depCustomer, setDepCustomer] = useState<any | null>(null);
   const [depForm, setDepForm] = useState({ type: "collected", amount: "0", occurred_at: new Date().toISOString().slice(0, 10), notes: "" });
@@ -131,21 +134,24 @@ export default function Customers() {
 
   const load = async () => {
     const { data } = await supabase.from("customers").select("*").order("customer_number");
-    setItems(data ?? []);
+    const scoped = (data ?? []).filter((c: any) => !c.company_id || c.company_id === company.id);
+    setItems(scoped);
     // overdue cylinders per customer
     const cutoff = new Date(Date.now() - OVERDUE_DAYS * 86400000).toISOString();
     const { data: cyls } = await supabase
       .from("cylinders")
-      .select("current_customer_id, issued_at")
+      .select("current_customer_id, issued_at, company_id")
       .eq("status", "issued")
       .lt("issued_at", cutoff);
     const map: Record<string, number> = {};
     (cyls ?? []).forEach((c: any) => {
-      if (c.current_customer_id) map[c.current_customer_id] = (map[c.current_customer_id] ?? 0) + 1;
+      if ((!c.company_id || c.company_id === company.id) && c.current_customer_id) {
+        map[c.current_customer_id] = (map[c.current_customer_id] ?? 0) + 1;
+      }
     });
     setOverdueByCustomer(map);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [company.id]);
 
   const openNew = () => { setEdit(null); setForm({ name: "", phone: "", email: "", gst_number: "", address: "", notes: "", initial_deposit: "0", deposit_notes: "" }); setOpen(true); };
   const openEdit = (c: any) => { setEdit(c); setForm({ name: c.name, phone: c.phone ?? "", email: c.email ?? "", gst_number: c.gst_number ?? "", address: c.address ?? "", notes: c.notes ?? "", initial_deposit: "0", deposit_notes: "" }); setOpen(true); };
@@ -159,6 +165,7 @@ export default function Customers() {
       gst_number: form.gst_number.trim() || null,
       address: form.address.trim() || null,
       notes: form.notes.trim() || null,
+      company_id: company.id,
     };
     
     let result: any;

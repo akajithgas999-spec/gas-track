@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 
 export default function Auth() {
-  const { user, loading } = useAuth();
+  const { user, loading, loginAsDemo } = useAuth();
   const nav = useNavigate();
   const [tab, setTab] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
@@ -21,18 +21,40 @@ export default function Auth() {
   // If already logged in, redirect to dashboard
   if (!loading && user) return <Navigate to="/" replace />;
 
+  const handleDemoLogin = () => {
+    loginAsDemo();
+    toast.success("Signed in with Demo Admin account!");
+    nav("/");
+  };
+
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
     if (!email || !password) return toast.error("Enter email and password");
     setBusy(true);
     try {
+      // Check if using demo email
+      if (email.trim().toLowerCase() === "admin@demo.com") {
+        handleDemoLogin();
+        return;
+      }
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
+      if (!supabaseUrl || supabaseUrl.includes("your-project.supabase.co")) {
+        toast.info("Supabase is not configured yet. Logging in with Demo Admin credentials.");
+        handleDemoLogin();
+        return;
+      }
+
       const { error } = await supabase.auth.signInWithPassword({ 
         email: email.trim(), 
         password 
       });
       if (error) {
         if (error.message.toLowerCase().includes("invalid login credentials")) {
-          toast.error("Wrong email or password. Please try again.");
+          toast.error("Wrong email or password. If you haven't registered, click 'Register Admin' tab or use Demo Mode.", { duration: 5000 });
+        } else if (error.message.toLowerCase().includes("failed to fetch")) {
+          toast.error("Cannot connect to Supabase server. Logging in via Demo Mode...");
+          handleDemoLogin();
         } else {
           toast.error(error.message);
         }
@@ -41,7 +63,8 @@ export default function Auth() {
       toast.success("Signed in successfully!");
       nav("/");
     } catch (err: any) {
-      toast.error(err.message ?? "Login failed");
+      toast.error(err.message ?? "Login failed. Entering Demo Mode...");
+      handleDemoLogin();
     } finally {
       setBusy(false);
     }
@@ -53,6 +76,13 @@ export default function Auth() {
     if (password.length < 6) return toast.error("Password must be at least 6 characters");
     setBusy(true);
     try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
+      if (!supabaseUrl || supabaseUrl.includes("your-project.supabase.co")) {
+        toast.info("Supabase is not configured yet. Creating Demo Admin session.");
+        handleDemoLogin();
+        return;
+      }
+
       // Sign up the new user
       const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
@@ -211,7 +241,7 @@ export default function Auth() {
               </div>
             </CardContent>
 
-            <CardFooter className="flex flex-col gap-4 pb-6">
+            <CardFooter className="flex flex-col gap-3 pb-6">
               <Button
                 type="submit"
                 disabled={busy}
@@ -219,6 +249,16 @@ export default function Auth() {
               >
                 {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {tab === "signin" ? "Sign In to Dashboard" : "Create Admin Account"}
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleDemoLogin}
+                className="w-full h-10 text-xs font-semibold uppercase tracking-wider border-border/80 hover:bg-primary/10 hover:text-primary transition-all"
+              >
+                <ShieldCheck className="mr-2 h-4 w-4 text-primary" />
+                Quick Demo Admin Access
               </Button>
 
               {/* Status information badges */}

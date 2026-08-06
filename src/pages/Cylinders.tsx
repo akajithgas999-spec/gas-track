@@ -7,8 +7,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, Trash2, Pencil, Flame, Circle } from "lucide-react";
+import { Plus, Search, Trash2, Pencil, Package, TrendingUp, Wrench, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
+
+import { useCompany } from "@/hooks/useCompany";
 
 const STATUS = ["in_stock", "issued", "maintenance", "retired"] as const;
 const STATUS_COLOR: Record<string, string> = {
@@ -19,11 +21,11 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export default function Cylinders() {
+  const { company } = useCompany();
   const [items, setItems] = useState<any[]>([]);
   const [types, setTypes] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [fillFilter, setFillFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<any | null>(null);
@@ -32,7 +34,6 @@ export default function Cylinders() {
     serial_number: "",
     type_id: "",
     status: "in_stock",
-    fill_status: "filled",
     notes: "",
   });
 
@@ -41,18 +42,19 @@ export default function Cylinders() {
       .from("cylinders") as any)
       .select("*, cylinder_types(name,code), customers(name)")
       .order("cylinder_number", { ascending: true, nullsFirst: false });
-    setItems(data ?? []);
+    const scoped = (data ?? []).filter((c: any) => !c.company_id || c.company_id === company.id);
+    setItems(scoped);
   };
 
   const loadTypes = async () => {
     const { data } = await supabase.from("cylinder_types").select("id, name, code").order("name");
     setTypes(data ?? []);
   };
-  useEffect(() => { load(); loadTypes(); }, []);
+  useEffect(() => { load(); loadTypes(); }, [company.id]);
 
   const openNew = () => {
     setEdit(null);
-    setForm({ cylinder_number: "", serial_number: "", type_id: types[0]?.id ?? "", status: "in_stock", fill_status: "filled", notes: "" });
+    setForm({ cylinder_number: "", serial_number: "", type_id: types[0]?.id ?? "", status: "in_stock", notes: "" });
     setOpen(true);
   };
   const openEdit = (c: any) => {
@@ -62,7 +64,6 @@ export default function Cylinders() {
       serial_number: c.serial_number,
       type_id: c.type_id,
       status: c.status,
-      fill_status: c.fill_status ?? "filled",
       notes: c.notes ?? "",
     });
     setOpen(true);
@@ -72,15 +73,15 @@ export default function Cylinders() {
     if (!form.serial_number.trim() && !form.cylinder_number.trim()) return toast.error("Cylinder number or serial required");
     if (!form.type_id) return toast.error("Type required");
     const cylNum = form.cylinder_number.trim() ? parseInt(form.cylinder_number.trim(), 10) : null;
-    if (cylNum !== null && (cylNum < 1 || cylNum > 2000)) return toast.error("Cylinder number must be 1–2000");
+    if (cylNum !== null && cylNum < 1) return toast.error("Cylinder number must be positive");
     const serialNum = form.serial_number.trim().toUpperCase() || (cylNum ? `CYL-${String(cylNum).padStart(4, "0")}` : "");
     const payload: any = {
       serial_number: serialNum,
       cylinder_number: cylNum,
       type_id: form.type_id,
       status: form.status as any,
-      fill_status: form.fill_status,
       notes: form.notes.trim() || null,
+      company_id: company.id,
     };
     const { error } = edit
       ? await supabase.from("cylinders").update(payload).eq("id", edit.id)
@@ -107,42 +108,41 @@ export default function Cylinders() {
       c.cylinder_types?.code?.toLowerCase().includes(q) ||
       c.customers?.name?.toLowerCase().includes(q);
     const sf = statusFilter === "all" || c.status === statusFilter;
-    const ff = fillFilter === "all" || (c.fill_status ?? "filled") === fillFilter;
     const tf = typeFilter === "all" || c.type_id === typeFilter;
-    return ok && sf && ff && tf;
+    return ok && sf && tf;
   });
 
   // Summary counts
-  const total2000 = items.length;
-  const filled = items.filter((c) => (c.fill_status ?? "filled") === "filled").length;
-  const empty = items.filter((c) => c.fill_status === "empty").length;
-  const issued = items.filter((c) => c.status === "issued").length;
+  const totalCount = items.length;
   const inStock = items.filter((c) => c.status === "in_stock").length;
+  const issued = items.filter((c) => c.status === "issued").length;
+  const maintenance = items.filter((c) => c.status === "maintenance").length;
+  const retired = items.filter((c) => c.status === "retired").length;
 
   return (
     <div className="space-y-6">
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <Card className="p-4 bg-card border-border/60">
-          <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Total</div>
-          <div className="text-2xl font-bold mt-1 font-mono">{total2000}</div>
-          <div className="text-[10px] text-muted-foreground">of 2000</div>
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Total Cylinders</div>
+          <div className="text-2xl font-bold mt-1 font-mono">{totalCount}</div>
+          <div className="text-[10px] text-muted-foreground">in inventory</div>
         </Card>
         <Card className="p-4 bg-card border-border/60">
-          <div className="text-[10px] uppercase tracking-widest text-muted-foreground">In Stock</div>
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1"><Package className="h-3.5 w-3.5 text-success" />In Stock</div>
           <div className="text-2xl font-bold mt-1 font-mono text-success">{inStock}</div>
         </Card>
         <Card className="p-4 bg-card border-border/60">
-          <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Issued</div>
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1"><TrendingUp className="h-3.5 w-3.5 text-warning" />Issued</div>
           <div className="text-2xl font-bold mt-1 font-mono text-warning">{issued}</div>
         </Card>
         <Card className="p-4 bg-card border-border/60">
-          <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1"><Flame className="h-3 w-3 text-success" />Filled</div>
-          <div className="text-2xl font-bold mt-1 font-mono text-success">{filled}</div>
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1"><Wrench className="h-3.5 w-3.5 text-primary" />Maintenance</div>
+          <div className="text-2xl font-bold mt-1 font-mono text-primary">{maintenance}</div>
         </Card>
         <Card className="p-4 bg-card border-border/60">
-          <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1"><Circle className="h-3 w-3" />Empty</div>
-          <div className="text-2xl font-bold mt-1 font-mono text-muted-foreground">{empty}</div>
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1"><ShieldAlert className="h-3.5 w-3.5 text-muted-foreground" />Retired</div>
+          <div className="text-2xl font-bold mt-1 font-mono text-muted-foreground">{retired}</div>
         </Card>
       </div>
 
@@ -157,14 +157,6 @@ export default function Cylinders() {
           <SelectContent>
             <SelectItem value="all">All statuses</SelectItem>
             {STATUS.map((s) => <SelectItem key={s} value={s}>{s.replace("_", " ")}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Select value={fillFilter} onValueChange={setFillFilter}>
-          <SelectTrigger className="w-full sm:w-[140px]"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All fills</SelectItem>
-            <SelectItem value="filled">Filled</SelectItem>
-            <SelectItem value="empty">Empty</SelectItem>
           </SelectContent>
         </Select>
         <Select value={typeFilter} onValueChange={setTypeFilter}>
@@ -182,9 +174,9 @@ export default function Cylinders() {
               <div className="space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <Label>Cylinder # (1–2000)</Label>
+                    <Label>Cylinder #</Label>
                     <Input
-                      type="number" min={1} max={2000}
+                      type="number" min={1}
                       value={form.cylinder_number}
                       onChange={(e) => setForm({ ...form, cylinder_number: e.target.value })}
                       placeholder="e.g. 42"
@@ -193,7 +185,7 @@ export default function Cylinders() {
                   </div>
                   <div>
                     <Label>Serial number</Label>
-                    <Input value={form.serial_number} onChange={(e) => setForm({ ...form, serial_number: e.target.value })} placeholder="CO2-0001 (auto if empty)" />
+                    <Input value={form.serial_number} onChange={(e) => setForm({ ...form, serial_number: e.target.value })} placeholder="CYL-0001 (auto if empty)" />
                   </div>
                 </div>
                 <div>
@@ -209,25 +201,6 @@ export default function Cylinders() {
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>{STATUS.map((s) => <SelectItem key={s} value={s}>{s.replace("_", " ")}</SelectItem>)}</SelectContent>
                   </Select>
-                </div>
-                <div>
-                  <Label>Fill Status</Label>
-                  <div className="flex rounded-md border border-border/60 overflow-hidden mt-1">
-                    <button
-                      type="button"
-                      onClick={() => setForm({ ...form, fill_status: "filled" })}
-                      className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold transition-colors ${form.fill_status === "filled" ? "bg-success text-success-foreground" : "bg-secondary/50 text-muted-foreground hover:bg-secondary"}`}
-                    >
-                      <Flame className="h-4 w-4" /> Filled
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setForm({ ...form, fill_status: "empty" })}
-                      className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold transition-colors ${form.fill_status === "empty" ? "bg-muted text-foreground" : "bg-secondary/50 text-muted-foreground hover:bg-secondary"}`}
-                    >
-                      <Circle className="h-4 w-4" /> Empty
-                    </button>
-                  </div>
                 </div>
                 <div><Label>Notes</Label><Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
                 <Button onClick={save} className="w-full">Save</Button>
@@ -247,7 +220,6 @@ export default function Cylinders() {
                 <th className="text-left px-4 py-3">Serial</th>
                 <th className="text-left px-4 py-3">Type</th>
                 <th className="text-left px-4 py-3">Status</th>
-                <th className="text-left px-4 py-3">Fill</th>
                 <th className="text-left px-4 py-3">Customer</th>
                 <th className="text-right px-4 py-3">Actions</th>
               </tr>
@@ -263,17 +235,6 @@ export default function Cylinders() {
                   <td className="px-4 py-3">
                     <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${STATUS_COLOR[c.status]}`}>{c.status.replace("_", " ")}</span>
                   </td>
-                  <td className="px-4 py-3">
-                    {(c.fill_status ?? "filled") === "filled" ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold bg-success/15 text-success border border-success/30">
-                        <Flame className="h-3 w-3" /> Filled
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold bg-muted text-muted-foreground border border-border">
-                        <Circle className="h-3 w-3" /> Empty
-                      </span>
-                    )}
-                  </td>
                   <td className="px-4 py-3 text-muted-foreground">{c.customers?.name ?? "—"}</td>
                   <td className="px-4 py-3 text-right">
                     <Button variant="ghost" size="icon" onClick={() => openEdit(c)}><Pencil className="h-4 w-4" /></Button>
@@ -281,7 +242,7 @@ export default function Cylinders() {
                   </td>
                 </tr>
               ))}
-              {filtered.length === 0 && <tr><td colSpan={7} className="text-center py-12 text-muted-foreground">No cylinders found.</td></tr>}
+              {filtered.length === 0 && <tr><td colSpan={6} className="text-center py-12 text-muted-foreground">No cylinders found.</td></tr>}
             </tbody>
           </table>
         </div>

@@ -3,6 +3,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Cylinder, Users, Receipt, AlertCircle, TrendingUp, Package, AlertTriangle } from "lucide-react";
 
+import { useCompany } from "@/hooks/useCompany";
+
 const OVERDUE_DAYS = 30;
 
 interface Stats {
@@ -17,6 +19,7 @@ interface Stats {
 }
 
 export default function Dashboard() {
+  const { company } = useCompany();
   const [s, setS] = useState<Stats | null>(null);
   const [recent, setRecent] = useState<any[]>([]);
   const [overdueList, setOverdueList] = useState<any[]>([]);
@@ -25,41 +28,46 @@ export default function Dashboard() {
     (async () => {
       const cutoff = new Date(Date.now() - OVERDUE_DAYS * 86400000).toISOString();
       const [cyl, cust, inv, txn, overdue] = await Promise.all([
-        supabase.from("cylinders").select("status"),
-        supabase.from("customers").select("id", { count: "exact", head: true }),
-        supabase.from("invoices").select("total, amount, status, paid_at"),
+        supabase.from("cylinders").select("status, company_id"),
+        supabase.from("customers").select("id, company_id"),
+        supabase.from("invoices").select("total, amount, status, paid_at, company_id"),
         supabase
           .from("transactions")
           .select("*, cylinders(serial_number), customers(name), cylinder_types(name,code)")
           .order("occurred_at", { ascending: false })
-          .limit(8),
+          .limit(20),
         supabase
           .from("cylinders")
-          .select("id, serial_number, issued_at, customers:current_customer_id(name, phone, customer_number)")
+          .select("id, serial_number, issued_at, company_id, customers:current_customer_id(name, phone, customer_number)")
           .eq("status", "issued")
           .lt("issued_at", cutoff)
           .order("issued_at"),
       ]);
-      const cyls = cyl.data ?? [];
-      const invs = inv.data ?? [];
+
+      const cyls = (cyl.data ?? []).filter((c: any) => !c.company_id || c.company_id === company.id);
+      const custs = (cust.data ?? []).filter((c: any) => !c.company_id || c.company_id === company.id);
+      const invs = (inv.data ?? []).filter((i: any) => !i.company_id || i.company_id === company.id);
+      const txns = (txn.data ?? []).filter((t: any) => !t.company_id || t.company_id === company.id).slice(0, 8);
+      const overdues = (overdue.data ?? []).filter((o: any) => !o.company_id || o.company_id === company.id);
+
       const monthStart = new Date();
       monthStart.setDate(1);
       setS({
         total: cyls.length,
         inStock: cyls.filter((c) => c.status === "in_stock").length,
         issued: cyls.filter((c) => c.status === "issued").length,
-        customers: cust.count ?? 0,
+        customers: custs.length,
         pendingInvoices: invs.filter((i) => i.status === "pending").length,
         pendingAmount: invs.filter((i) => i.status === "pending").reduce((a, b) => a + Number(b.total ?? b.amount), 0),
         monthRevenue: invs
           .filter((i) => i.status === "paid" && i.paid_at && new Date(i.paid_at) >= monthStart)
           .reduce((a, b) => a + Number(b.total ?? b.amount), 0),
-        overdueCount: (overdue.data ?? []).length,
+        overdueCount: overdues.length,
       });
-      setRecent(txn.data ?? []);
-      setOverdueList(overdue.data ?? []);
+      setRecent(txns);
+      setOverdueList(overdues);
     })();
-  }, []);
+  }, [company.id]);
 
   const cards = [
     { label: "Total Cylinders", value: s?.total ?? 0, icon: Cylinder, accent: "text-primary" },

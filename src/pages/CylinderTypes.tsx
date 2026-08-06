@@ -14,7 +14,6 @@ interface CT {
   name: string;
   code: string;
   price: number;
-  deposit: number;
   description: string | null;
 }
 
@@ -22,7 +21,7 @@ export default function CylinderTypes() {
   const [items, setItems] = useState<CT[]>([]);
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<CT | null>(null);
-  const [form, setForm] = useState({ name: "", code: "", price: "0", deposit: "0", description: "" });
+  const [form, setForm] = useState({ name: "", code: "", price: "0", description: "" });
 
   const load = async () => {
     const { data } = await supabase.from("cylinder_types").select("*").order("name");
@@ -32,12 +31,12 @@ export default function CylinderTypes() {
 
   const openNew = () => {
     setEdit(null);
-    setForm({ name: "", code: "", price: "0", deposit: "0", description: "" });
+    setForm({ name: "", code: "", price: "0", description: "" });
     setOpen(true);
   };
   const openEdit = (t: CT) => {
     setEdit(t);
-    setForm({ name: t.name, code: t.code, price: String(t.price), deposit: String(t.deposit), description: t.description ?? "" });
+    setForm({ name: t.name, code: t.code, price: String(t.price), description: t.description ?? "" });
     setOpen(true);
   };
 
@@ -47,7 +46,7 @@ export default function CylinderTypes() {
       name: form.name.trim(),
       code: form.code.trim().toUpperCase(),
       price: Number(form.price),
-      deposit: Number(form.deposit),
+      deposit: 0,
       description: form.description.trim() || null,
     };
     const { error } = edit
@@ -78,11 +77,10 @@ export default function CylinderTypes() {
           <DialogContent>
             <DialogHeader><DialogTitle>{edit ? "Edit" : "New"} cylinder type</DialogTitle></DialogHeader>
             <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div><Label>Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-                <div><Label>Code</Label><Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="CO2" /></div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div><Label>Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Oxygen" /></div>
+                <div><Label>Code</Label><Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="O2" /></div>
                 <div><Label>Price (₹)</Label><Input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
-                <div><Label>Deposit (₹)</Label><Input type="number" value={form.deposit} onChange={(e) => setForm({ ...form, deposit: e.target.value })} /></div>
               </div>
               <div><Label>Description</Label><Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
               <Button onClick={save} className="w-full">Save</Button>
@@ -107,7 +105,6 @@ export default function CylinderTypes() {
             {t.description && <p className="text-sm text-muted-foreground mb-3">{t.description}</p>}
             <div className="flex gap-4 text-sm pt-3 border-t border-border/40">
               <div><span className="text-muted-foreground">Price:</span> <span className="font-mono font-semibold">₹{t.price}</span></div>
-              <div><span className="text-muted-foreground">Deposit:</span> <span className="font-mono font-semibold">₹{t.deposit}</span></div>
             </div>
           </Card>
         ))}

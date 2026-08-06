@@ -18,7 +18,7 @@ import Reports from "./pages/Reports";
 import Search from "./pages/Search";
 import CustomerHistory from "./pages/CustomerHistory";
 import ExportData from "./pages/ExportData";
-import NotFound from "./pages/NotFound.tsx";
+import { CompanyProvider } from "@/hooks/useCompany";
 
 const queryClient = new QueryClient();
 
@@ -29,7 +29,8 @@ const App = () => (
       <Sonner theme="dark" />
       <BrowserRouter>
         <AuthProvider>
-          <Routes>
+          <CompanyProvider>
+            <Routes>
             <Route path="/auth" element={<Auth />} />
             <Route element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
               <Route path="/" element={<Dashboard />} />
@@ -46,6 +47,7 @@ const App = () => (
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </CompanyProvider>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

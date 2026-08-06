@@ -185,6 +185,11 @@ CREATE TABLE IF NOT EXISTS public.purchases (
   sgst_amount NUMERIC NOT NULL DEFAULT 0,
   roundoff NUMERIC NOT NULL DEFAULT 0,
   total NUMERIC NOT NULL DEFAULT 0,
+  payment_status TEXT NOT NULL DEFAULT 'paid',
+  amount_paid NUMERIC NOT NULL DEFAULT 0,
+  balance_amount NUMERIC NOT NULL DEFAULT 0,
+  payment_date DATE,
+  payments JSONB NOT NULL DEFAULT '[]'::jsonb,
   notes TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
