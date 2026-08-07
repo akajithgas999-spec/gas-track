@@ -132,12 +132,12 @@ export default function Customers() {
   };
 
   const load = async () => {
-    const { data, error } = await supabase.from("customers").select("*").order("customer_number");
+    const { data, error } = await (supabase.from("customers") as any)
+      .select("*")
+      .eq("company", company)
+      .order("customer_number");
     if (error) { console.error(error); }
-    // Filter by company in JS so it works even before the migration SQL is run
-    const all = data ?? [];
-    const filtered = all.some((r: any) => r.company) ? all.filter((r: any) => r.company === company) : all;
-    setItems(filtered);
+    setItems(data ?? []);
     const cutoff = new Date(Date.now() - OVERDUE_DAYS * 86400000).toISOString();
     const { data: cyls } = await supabase
       .from("cylinders")

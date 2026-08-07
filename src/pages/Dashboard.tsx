@@ -28,12 +28,13 @@ export default function Dashboard() {
       const cutoff = new Date(Date.now() - OVERDUE_DAYS * 86400000).toISOString();
       const [cyl, cust, inv, txn, overdue] = await Promise.all([
         supabase.from("cylinders").select("status"),
-        supabase.from("customers").select("id", { count: "exact" }),
-        supabase.from("invoices").select("total, amount, status, paid_at, company"),
-        supabase.from("transactions")
-          .select("*, cylinders(serial_number), customers(name), cylinder_types(name,code), company")
+        (supabase.from("customers") as any).select("id", { count: "exact", head: true }).eq("company", company),
+        (supabase.from("invoices") as any).select("total, amount, status, paid_at").eq("company", company),
+        (supabase.from("transactions") as any)
+          .select("*, cylinders(serial_number), customers(name), cylinder_types(name,code)")
+          .eq("company", company)
           .order("occurred_at", { ascending: false })
-          .limit(50),
+          .limit(8),
         supabase
           .from("cylinders")
           .select("id, serial_number, issued_at, customers:current_customer_id(name, phone, customer_number)")
@@ -42,22 +43,14 @@ export default function Dashboard() {
           .order("issued_at"),
       ]);
       const cyls = cyl.data ?? [];
-      const allInvs = inv.data ?? [];
-      const allTxns = txn.data ?? [];
-      // JS filter by company (works before and after migration)
-      const hasCompanyCol = allInvs.some((r: any) => r.company != null);
-      const invs = hasCompanyCol ? allInvs.filter((r: any) => r.company === company) : allInvs;
-      const txns = allTxns.some((r: any) => r.company != null) ? allTxns.filter((r: any) => r.company === company) : allTxns;
-      const custCount = hasCompanyCol
-        ? (cust.data ?? []).filter((r: any) => r.company === company).length
-        : (cust.count ?? (cust.data ?? []).length);
+      const invs = inv.data ?? [];
       const monthStart = new Date();
       monthStart.setDate(1);
       setS({
         total: cyls.length,
         inStock: cyls.filter((c) => c.status === "in_stock").length,
         issued: cyls.filter((c) => c.status === "issued").length,
-        customers: custCount,
+        customers: cust.count ?? 0,
         pendingInvoices: invs.filter((i: any) => i.status === "pending").length,
         pendingAmount: invs.filter((i: any) => i.status === "pending").reduce((a: number, b: any) => a + Number(b.total ?? b.amount), 0),
         monthRevenue: invs
@@ -65,7 +58,7 @@ export default function Dashboard() {
           .reduce((a: number, b: any) => a + Number(b.total ?? b.amount), 0),
         overdueCount: (overdue.data ?? []).length,
       });
-      setRecent(txns.slice(0, 8));
+      setRecent(txn.data ?? []);
       setOverdueList(overdue.data ?? []);
     })();
   }, [company]);

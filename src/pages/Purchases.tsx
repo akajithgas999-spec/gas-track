@@ -109,12 +109,11 @@ export default function Purchases() {
   const [lines, setLines] = useState<Line[]>([]);
 
   const load = async () => {
-    const { data } = await (supabase
-      .from("purchases") as any)
+    const { data } = await (supabase.from("purchases") as any)
       .select("*, suppliers(name, gst_number), purchase_items(serial_number, cylinder_number, fill_status)")
+      .eq("company", company)
       .order("bill_date", { ascending: false });
-    const all = data ?? [];
-    setItems(all.some((r: any) => r.company) ? all.filter((r: any) => r.company === company) : all);
+    setItems(data ?? []);
   };
 
   const loadCylindersCache = async () => {
@@ -133,10 +132,7 @@ export default function Purchases() {
   useEffect(() => {
     load();
     loadCylindersCache();
-    supabase.from("suppliers").select("*").order("name").then(({ data }) => {
-      const all = data ?? [];
-      setSuppliers(all.some((r: any) => r.company) ? all.filter((r: any) => r.company === company) : all);
-    });
+    (supabase.from("suppliers") as any).select("*").eq("company", company).order("name").then(({ data }: any) => setSuppliers(data ?? []));
     supabase.from("cylinder_types").select("*").then(({ data }) => setTypes(data ?? []));
   }, [company]);
 

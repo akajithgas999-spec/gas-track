@@ -84,20 +84,16 @@ export default function Invoices() {
   const [lines, setLines] = useState<LineItem[]>([]);
 
   const load = async () => {
-    const { data } = await supabase
-      .from("invoices")
+    const { data } = await (supabase.from("invoices") as any)
       .select("*, customers(name, phone, customer_number, gst_number, address)")
+      .eq("company", company)
       .order("issued_at", { ascending: false });
-    const all = data ?? [];
-    setItems(all.some((r: any) => r.company) ? all.filter((r: any) => r.company === company) : all);
+    setItems(data ?? []);
   };
 
   useEffect(() => {
     load();
-    supabase.from("customers").select("id, name, customer_number, gst_number, address, phone").order("customer_number").then(({ data }) => {
-      const all = data ?? [];
-      setCustomers(all.some((r: any) => r.company) ? all.filter((r: any) => r.company === company) : all);
-    });
+    (supabase.from("customers") as any).select("id, name, customer_number, gst_number, address, phone").eq("company", company).order("customer_number").then(({ data }: any) => setCustomers(data ?? []));
     supabase.from("cylinder_types").select("*").then(({ data }) => setTypes(data ?? []));
   }, [company]);
 

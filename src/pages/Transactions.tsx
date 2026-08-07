@@ -29,22 +29,20 @@ export default function Transactions() {
   });
 
   const load = async () => {
-    const { data } = await supabase
-      .from("transactions")
+    const { data } = await (supabase.from("transactions") as any)
       .select("*, cylinders(serial_number), customers(name), cylinder_types(code,name,price)")
+      .eq("company", company)
       .order("occurred_at", { ascending: false })
       .limit(200);
-    const all = data ?? [];
-    setItems(all.some((r: any) => r.company) ? all.filter((r: any) => r.company === company) : all);
+    setItems(data ?? []);
   };
   const loadRefs = async () => {
     const [{ data: cyl }, { data: cust }] = await Promise.all([
       supabase.from("cylinders").select("id, serial_number, type_id, status, cylinder_types(code,price)").order("serial_number"),
-      supabase.from("customers").select("id, name").order("name"),
+      (supabase.from("customers") as any).select("id, name").eq("company", company).order("name"),
     ]);
     setCylinders(cyl ?? []);
-    const allCust = cust ?? [];
-    setCustomers(allCust.some((r: any) => r.company) ? allCust.filter((r: any) => r.company === company) : allCust);
+    setCustomers(cust ?? []);
   };
   useEffect(() => { load(); loadRefs(); }, [company]);
 
