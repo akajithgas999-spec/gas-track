@@ -1,65 +1,28 @@
 import { createContext, useContext, useState, ReactNode } from "react";
 
-export interface Company {
-  id: string;
-  name: string;
-  code: string;
-  tagline: string;
-  badgeColor: string;
-}
+export type CompanyName = "AjithGas" | "Barani Gas";
 
-export const DEFAULT_COMPANIES: Company[] = [
-  {
-    id: "comp-1",
-    name: "CylinderOps Main Depot",
-    code: "COP1",
-    tagline: "Primary Gas Distribution",
-    badgeColor: "bg-gradient-to-r from-orange-500 to-amber-500 text-white",
-  },
-  {
-    id: "comp-2",
-    name: "PrimeGas Industrial Co",
-    code: "PGAS",
-    tagline: "Industrial & Medical Supplies",
-    badgeColor: "bg-gradient-to-r from-blue-600 to-cyan-500 text-white",
-  },
-];
+const COMPANIES: CompanyName[] = ["AjithGas", "Barani Gas"];
 
 interface CompanyCtx {
-  company: Company;
-  companies: Company[];
-  setCompanyId: (id: string) => void;
+  company: CompanyName;
+  toggle: () => void;
 }
 
-const Ctx = createContext<CompanyCtx>({
-  company: DEFAULT_COMPANIES[0],
-  companies: DEFAULT_COMPANIES,
-  setCompanyId: () => {},
-});
+const Ctx = createContext<CompanyCtx>({ company: "AjithGas", toggle: () => {} });
 
 export function CompanyProvider({ children }: { children: ReactNode }) {
-  const [companyId, setCompanyIdState] = useState<string>(() => {
-    return localStorage.getItem("active_company_id") || "comp-1";
+  const [company, setCompany] = useState<CompanyName>(() => {
+    return (localStorage.getItem("active_company") as CompanyName) || "AjithGas";
   });
 
-  const company = DEFAULT_COMPANIES.find((c) => c.id === companyId) || DEFAULT_COMPANIES[0];
-
-  const setCompanyId = (id: string) => {
-    localStorage.setItem("active_company_id", id);
-    setCompanyIdState(id);
+  const toggle = () => {
+    const next = COMPANIES[(COMPANIES.indexOf(company) + 1) % COMPANIES.length];
+    setCompany(next);
+    localStorage.setItem("active_company", next);
   };
 
-  return (
-    <Ctx.Provider
-      value={{
-        company,
-        companies: DEFAULT_COMPANIES,
-        setCompanyId,
-      }}
-    >
-      {children}
-    </Ctx.Provider>
-  );
+  return <Ctx.Provider value={{ company, toggle }}>{children}</Ctx.Provider>;
 }
 
 export const useCompany = () => useContext(Ctx);

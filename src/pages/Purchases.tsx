@@ -76,22 +76,53 @@ export default function Purchases() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [types, setTypes] = useState<any[]>([]);
   const [cylindersCache, setCylindersCache] = useState<Map<number, { serial_number: string; type_id?: string }>>(new Map());
+  
+  // Dialog States
+  const [open, setOpen] = useState(false);
+  const [supplierOpen, setSupplierOpen] = useState(false);
+  const [viewing, setViewing] = useState<any | null>(null);
+
+  // New Payment Installment Modal State
+  const [payModalItem, setPayModalItem] = useState<any | null>(null);
+  const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
+  const [payAmount, setPayAmount] = useState("");
+  const [payMethod, setPayMethod] = useState("UPI / GPay / PhonePe");
+  const [payNotes, setPayNotes] = useState("");
+
+  const [supplier, setSupplier] = useState({ name: "", phone: "", gst_number: "", address: "" });
+  const [form, setForm] = useState({
+    supplier_id: "",
+    bill_number: "",
+    bill_date: new Date().toISOString().slice(0, 10),
+    payment_date: new Date().toISOString().slice(0, 10),
+    challan_number: "",
+    challan_date: "",
+    gst_number: "",
+    discount: "0",
+    cgst_rate: "9",
+    sgst_rate: "9",
+    payment_status: "paid" as PaymentStatus,
+    amount_paid: "0",
+    payment_method: "Cash",
+    notes: "",
+  });
+  const [lines, setLines] = useState<Line[]>([]);
 
   const load = async () => {
     const { data } = await (supabase
       .from("purchases") as any)
       .select("*, suppliers(name, gst_number), purchase_items(serial_number, cylinder_number, fill_status)")
       .order("bill_date", { ascending: false });
-    const scoped = (data ?? []).filter((p: any) => !p.company_id || p.company_id === company.id);
-    setItems(scoped);
+    const all = data ?? [];
+    setItems(all.some((r: any) => r.company) ? all.filter((r: any) => r.company === company) : all);
   };
 
   const loadCylindersCache = async () => {
-    const { data } = await (supabase.from("cylinders") as any).select("cylinder_number, serial_number, type_id, company_id");
+    const { data } = await (supabase.from("cylinders") as any).select("cylinder_number, serial_number, type_id");
     const map = new Map<number, { serial_number: string; type_id?: string }>();
     if (data) {
       for (const c of data) {
-        if ((!c.company_id || c.company_id === company.id) && c.cylinder_number && c.serial_number) {
+        if (c.cylinder_number && c.serial_number) {
           map.set(Number(c.cylinder_number), { serial_number: c.serial_number, type_id: c.type_id });
         }
       }
@@ -102,9 +133,12 @@ export default function Purchases() {
   useEffect(() => {
     load();
     loadCylindersCache();
-    supabase.from("suppliers").select("*").order("name").then(({ data }) => setSuppliers(data ?? []));
+    supabase.from("suppliers").select("*").order("name").then(({ data }) => {
+      const all = data ?? [];
+      setSuppliers(all.some((r: any) => r.company) ? all.filter((r: any) => r.company === company) : all);
+    });
     supabase.from("cylinder_types").select("*").then(({ data }) => setTypes(data ?? []));
-  }, [company.id]);
+  }, [company]);
 
   useEffect(() => {
     const s = suppliers.find((x) => x.id === form.supplier_id);
@@ -185,7 +219,8 @@ export default function Purchases() {
       phone: supplier.phone.trim() || null,
       gst_number: supplier.gst_number.trim() || null,
       address: supplier.address.trim() || null,
-    }).select().single();
+      company,
+    } as any).select().single();
     if (error) return toast.error(error.message);
     setSuppliers([...suppliers, data]);
     setForm({ ...form, supplier_id: data.id });
@@ -238,6 +273,7 @@ export default function Purchases() {
       balance_amount: totals.balance,
       payment_date: totals.paid > 0 ? (form.payment_date || form.bill_date) : null,
       payments: initialPayments,
+      company,
     };
 
     let { data: pur, error } = await supabase.from("purchases").insert(payload).select().single();

@@ -6,10 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-import { useCompany } from "@/hooks/useCompany";
-
 export default function Reports() {
-  const { company } = useCompany();
   const [from, setFrom] = useState(() => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); });
   const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
 
@@ -33,29 +30,26 @@ export default function Reports() {
       const [{ data: s }, { data: p }, { data: d }] = await Promise.all([
         supabase
           .from("invoices")
-          .select("invoice_number, billing_date, total, taxable_amount, cgst_amount, sgst_amount, status, company_id, customers(name, customer_number), invoice_items(type_id, taxable, cgst_amount, sgst_amount, total)")
+          .select("invoice_number, billing_date, total, taxable_amount, cgst_amount, sgst_amount, status, customers(name, customer_number), invoice_items(type_id, taxable, cgst_amount, sgst_amount, total)")
           .gte("billing_date", from)
           .lte("billing_date", to)
           .order("billing_date", { ascending: false }),
         supabase
           .from("purchases")
-          .select("purchase_number, bill_number, bill_date, total, taxable_amount, cgst_amount, sgst_amount, company_id, suppliers(name), purchase_items(type_id, taxable, cgst_amount, sgst_amount, total)")
+          .select("purchase_number, bill_number, bill_date, total, taxable_amount, cgst_amount, sgst_amount, suppliers(name), purchase_items(type_id, taxable, cgst_amount, sgst_amount, total)")
           .gte("bill_date", from)
           .lte("bill_date", to)
           .order("bill_date", { ascending: false }),
         supabase
           .from("cylinders")
-          .select("id, serial_number, status, type_id, issued_at, company_id, cylinder_types(code,name), customers:current_customer_id(name, customer_number, phone)")
+          .select("id, serial_number, status, type_id, issued_at, cylinder_types(code,name), customers:current_customer_id(name, customer_number, phone)")
           .in("status", ["maintenance", "retired"]),
       ]);
-      const scopedS = (s ?? []).filter((item: any) => !item.company_id || item.company_id === company.id);
-      const scopedP = (p ?? []).filter((item: any) => !item.company_id || item.company_id === company.id);
-      const scopedD = (d ?? []).filter((item: any) => !item.company_id || item.company_id === company.id);
-      setSales(scopedS);
-      setPurchases(scopedP);
-      setDeadCylinders(scopedD);
+      setSales(s ?? []);
+      setPurchases(p ?? []);
+      setDeadCylinders(d ?? []);
     })();
-  }, [from, to, company.id]);
+  }, [from, to]);
 
   const filteredSales = sales.map((s) => {
     if (typeFilter === "all") return s;

@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/useAuth";
+import { CompanyProvider } from "@/hooks/useCompany";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import AdminLayout from "@/components/AdminLayout";
 import Auth from "./pages/Auth";
@@ -18,8 +19,7 @@ import Reports from "./pages/Reports";
 import Search from "./pages/Search";
 import CustomerHistory from "./pages/CustomerHistory";
 import ExportData from "./pages/ExportData";
-import NotFound from "./pages/NotFound";
-import { CompanyProvider } from "@/hooks/useCompany";
+import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
 
@@ -29,9 +29,9 @@ const App = () => (
       <Toaster />
       <Sonner theme="dark" />
       <BrowserRouter>
+        <CompanyProvider>
         <AuthProvider>
-          <CompanyProvider>
-            <Routes>
+          <Routes>
             <Route path="/auth" element={<Auth />} />
             <Route element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
               <Route path="/" element={<Dashboard />} />
@@ -48,8 +48,8 @@ const App = () => (
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>
-          </CompanyProvider>
         </AuthProvider>
+        </CompanyProvider>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useCompany } from "@/hooks/useCompany";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,9 +10,31 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Plus, CheckCircle2, Clock, X, Trash2, Printer, ArrowDownToLine, ArrowUpFromLine, Package, Check, ChevronsUpDown } from "lucide-react";
+import {
+  Plus, CheckCircle2, Clock, X, Trash2, Printer,
+  ArrowDownToLine, ArrowUpFromLine, Package, Check, ChevronsUpDown,
+  AlertCircle, Banknote, MessageSquare, Send, Copy,
+} from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+
+// ── SMS helpers ──────────────────────────────────────────────────
+function buildSmsMessage(inv: any, company: string): string {
+  const name = inv.customers?.name ?? "Customer";
+  const invNo = inv.invoice_number ?? "";
+  const total = Number(inv.total ?? inv.amount ?? 0);
+  const balance = Number(inv.balance_amount ?? total);
+  const date = inv.billing_date ? new Date(inv.billing_date).toLocaleDateString("en-IN") : "";
+  return `Dear ${name}, your invoice ${invNo} dated ${date} from ${company} has a balance of Rs.${balance.toLocaleString()} pending. Please clear at your earliest. Thank you.`;
+}
+
+function smsLink(phone: string, message: string): string {
+  const clean = phone.replace(/\D/g, "");
+  return `sms:${clean}?body=${encodeURIComponent(message)}`;
+}
+// ─────────────────────────────────────────────────────────────────
+
+type PaymentStatus = "paid" | "partial" | "unpaid";
 
 type LineItem = {
   type_id: string;
@@ -27,7 +50,14 @@ function parseCylNums(raw: string): number[] {
   return raw.split(/[,\s]+/).map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n) && n >= 1 && n <= 2000);
 }
 
+const PAY_STATUS_STYLES: Record<PaymentStatus, { bg: string; text: string; icon: any; label: string }> = {
+  paid:    { bg: "bg-emerald-500/15", text: "text-emerald-400", icon: CheckCircle2, label: "Paid" },
+  partial: { bg: "bg-amber-500/15",   text: "text-amber-400",   icon: Clock,        label: "Half Paid" },
+  unpaid:  { bg: "bg-rose-500/15",    text: "text-rose-400",    icon: AlertCircle,  label: "Unpaid" },
+};
+
 export default function Invoices() {
+  const { company } = useCompany();
   const [items, setItems] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [types, setTypes] = useState<any[]>([]);
@@ -35,17 +65,21 @@ export default function Invoices() {
   const [open, setOpen] = useState(false);
   const [customerOpen, setCustomerOpen] = useState(false);
   const [viewing, setViewing] = useState<any | null>(null);
+  const [smsOpen, setSmsOpen] = useState(false);
 
   const [form, setForm] = useState({
     customer_id: "",
     gst_number: "",
     billing_date: new Date().toISOString().slice(0, 10),
     return_date: "",
-    deposit_amount: "0",
     discount: "0",
     cgst_rate: "9",
     sgst_rate: "9",
     notes: "",
+    payment_status: "unpaid" as PaymentStatus,
+    amount_paid: "0",
+    payment_date: new Date().toISOString().slice(0, 10),
+    payment_method: "Cash",
   });
   const [lines, setLines] = useState<LineItem[]>([]);
 
@@ -54,19 +88,32 @@ export default function Invoices() {
       .from("invoices")
       .select("*, customers(name, phone, customer_number, gst_number, address)")
       .order("issued_at", { ascending: false });
-    setItems(data ?? []);
+    const all = data ?? [];
+    setItems(all.some((r: any) => r.company) ? all.filter((r: any) => r.company === company) : all);
   };
 
   useEffect(() => {
     load();
-    supabase.from("customers").select("id, name, customer_number, gst_number, address, phone").order("customer_number").then(({ data }) => setCustomers(data ?? []));
+    supabase.from("customers").select("id, name, customer_number, gst_number, address, phone").order("customer_number").then(({ data }) => {
+      const all = data ?? [];
+      setCustomers(all.some((r: any) => r.company) ? all.filter((r: any) => r.company === company) : all);
+    });
     supabase.from("cylinder_types").select("*").then(({ data }) => setTypes(data ?? []));
-  }, []);
+  }, [company]);
 
   useEffect(() => {
     const c = customers.find((x) => x.id === form.customer_id);
     if (c) setForm((f) => ({ ...f, gst_number: c.gst_number ?? "" }));
   }, [form.customer_id, customers]);
+
+  // Auto-set amount_paid when status changes to "paid"
+  useEffect(() => {
+    if (form.payment_status === "paid") {
+      setForm((f) => ({ ...f, amount_paid: String(totals.total) }));
+    } else if (form.payment_status === "unpaid") {
+      setForm((f) => ({ ...f, amount_paid: "0" }));
+    }
+  }, [form.payment_status]);
 
   const totals = useMemo(() => {
     const subtotal = lines.reduce((a, l) => a + Number(l.quantity || 0) * Number(l.rate || 0), 0);
@@ -74,15 +121,29 @@ export default function Invoices() {
     const taxable = Math.max(0, subtotal - discount);
     const cgst = (taxable * (Number(form.cgst_rate) || 0)) / 100;
     const sgst = (taxable * (Number(form.sgst_rate) || 0)) / 100;
-    const deposit = Number(form.deposit_amount) || 0;
-    const gross = taxable + cgst + sgst + deposit;
+    const gross = taxable + cgst + sgst;
     const total = Math.round(gross);
     const roundoff = +(total - gross).toFixed(2);
-    return { subtotal, discount, taxable, cgst, sgst, deposit, total, roundoff };
+
+    const paid = form.payment_status === "paid"
+      ? total
+      : form.payment_status === "partial"
+      ? Math.min(total, Math.max(0, Number(form.amount_paid) || 0))
+      : 0;
+    const balance = Math.max(0, total - paid);
+
+    return { subtotal, discount, taxable, cgst, sgst, total, roundoff, paid, balance };
   }, [lines, form]);
 
   const resetForm = () => {
-    setForm({ customer_id: "", gst_number: "", billing_date: new Date().toISOString().slice(0, 10), return_date: "", deposit_amount: "0", discount: "0", cgst_rate: "9", sgst_rate: "9", notes: "" });
+    setForm({
+      customer_id: "", gst_number: "",
+      billing_date: new Date().toISOString().slice(0, 10),
+      return_date: "", discount: "0", cgst_rate: "9", sgst_rate: "9", notes: "",
+      payment_status: "unpaid", amount_paid: "0",
+      payment_date: new Date().toISOString().slice(0, 10),
+      payment_method: "Cash",
+    });
     setLines([]);
   };
 
@@ -112,6 +173,9 @@ export default function Invoices() {
     if (!form.customer_id) return toast.error("Select a customer");
     if (lines.length === 0) return toast.error("Add at least one line item");
 
+    // Map payment_status to invoice status
+    const invoiceStatus = form.payment_status === "paid" ? "paid" : "pending";
+
     const payload: any = {
       customer_id: form.customer_id,
       gst_number: form.gst_number || null,
@@ -120,7 +184,7 @@ export default function Invoices() {
       hsn_code: lines[0]?.hsn_code || null,
       taxable_amount: totals.taxable,
       discount: totals.discount,
-      deposit_amount: totals.deposit,
+      deposit_amount: 0,
       cgst_rate: Number(form.cgst_rate) || 0,
       cgst_amount: totals.cgst,
       sgst_rate: Number(form.sgst_rate) || 0,
@@ -132,6 +196,15 @@ export default function Invoices() {
       cylinder_ids: [],
       issued_cylinder_numbers: allIssued,
       returned_cylinder_numbers: allReturned,
+      status: invoiceStatus,
+      paid_at: form.payment_status === "paid" ? new Date().toISOString() : null,
+      // Payment tracking
+      payment_status: form.payment_status,
+      amount_paid: totals.paid,
+      balance_amount: totals.balance,
+      payment_date: totals.paid > 0 ? form.payment_date : null,
+      payment_method: form.payment_method || null,
+      company,
     };
 
     const { data: inv, error } = await (supabase.from("invoices") as any).insert(payload).select().single();
@@ -144,11 +217,6 @@ export default function Invoices() {
       return { invoice_id: inv.id, cylinder_id: null, type_id: l.type_id || null, description: l.description, hsn_code: l.hsn_code, quantity: l.quantity, rate: l.rate, taxable, cgst_amount: cg, sgst_amount: sg, total: taxable + cg + sg };
     });
     if (itemRows.length) await supabase.from("invoice_items").insert(itemRows);
-
-    if (totals.deposit > 0) {
-      await supabase.from("customer_deposits").insert({ customer_id: form.customer_id, type: "collected", amount: totals.deposit, occurred_at: new Date(form.billing_date).toISOString(), notes: `Invoice ${inv.invoice_number}` });
-      supabase.functions.invoke("notify-deposit-change", { body: { customer_id: form.customer_id, type: "collected", amount: totals.deposit } }).catch(() => {});
-    }
 
     toast.success("Invoice created ✓");
     setOpen(false);
@@ -164,9 +232,28 @@ export default function Invoices() {
     load();
   };
 
-  const filtered = items.filter((i) => filter === "all" || i.status === filter);
-  const pending = items.filter((i) => i.status === "pending").reduce((a, b) => a + Number(b.total ?? b.amount), 0);
-  const paid = items.filter((i) => i.status === "paid").reduce((a, b) => a + Number(b.total ?? b.amount), 0);
+  const sendSmsReminder = (inv: any) => {
+    const phone = inv.customers?.phone;
+    if (!phone) return toast.error("No phone number for this customer");
+    const msg = buildSmsMessage(inv, company);
+    const link = smsLink(phone, msg);
+    window.open(link, "_blank");
+  };
+
+  const copyAllSms = () => {
+    const unpaid = items.filter((i) => i.status !== "paid" && i.customers?.phone);
+    if (!unpaid.length) return toast.info("No pending invoices with phone numbers");
+    const text = unpaid.map((i) => {
+      const msg = buildSmsMessage(i, company);
+      return `To: ${i.customers.phone}\n${msg}`;
+    }).join("\n\n---\n\n");
+    navigator.clipboard.writeText(text).then(() => toast.success(`Copied ${unpaid.length} reminder messages!`));
+  };
+
+  const filtered = items.filter((i) => filter === "all" || i.status === filter || i.payment_status === filter);
+  const totalPaid = items.filter((i) => i.status === "paid").reduce((a, b) => a + Number(b.total ?? b.amount), 0);
+  const totalPending = items.filter((i) => i.status === "pending").reduce((a, b) => a + Number(b.total ?? b.amount), 0);
+  const totalBalance = items.reduce((a, b) => a + Number(b.balance_amount ?? 0), 0);
 
   const selectedCustomer = customers.find((c) => c.id === form.customer_id);
 
@@ -174,22 +261,46 @@ export default function Invoices() {
     <div className="space-y-6">
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="p-5 bg-card border-border/60"><div className="text-xs uppercase tracking-widest text-muted-foreground">Total Paid</div><div className="text-2xl font-bold mt-2 font-mono text-success">₹{paid.toLocaleString()}</div></Card>
-        <Card className="p-5 bg-card border-border/60"><div className="text-xs uppercase tracking-widest text-muted-foreground">Pending</div><div className="text-2xl font-bold mt-2 font-mono text-warning">₹{pending.toLocaleString()}</div></Card>
-        <Card className="p-5 bg-card border-border/60"><div className="text-xs uppercase tracking-widest text-muted-foreground">Total Invoices</div><div className="text-2xl font-bold mt-2 font-mono">{items.length}</div></Card>
+        <Card className="p-5 bg-card border-border/60">
+          <div className="text-xs uppercase tracking-widest text-muted-foreground">Total Paid</div>
+          <div className="text-2xl font-bold mt-2 font-mono text-emerald-400">₹{totalPaid.toLocaleString()}</div>
+        </Card>
+        <Card className="p-5 bg-card border-border/60">
+          <div className="text-xs uppercase tracking-widest text-muted-foreground">Pending / Balance</div>
+          <div className="text-2xl font-bold mt-2 font-mono text-amber-400">₹{totalBalance > 0 ? totalBalance.toLocaleString() : totalPending.toLocaleString()}</div>
+        </Card>
+        <Card className="p-5 bg-card border-border/60">
+          <div className="text-xs uppercase tracking-widest text-muted-foreground">Total Invoices</div>
+          <div className="text-2xl font-bold mt-2 font-mono">{items.length}</div>
+        </Card>
       </div>
 
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         <Select value={filter} onValueChange={setFilter}>
-          <SelectTrigger className="w-full sm:w-[160px]"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All invoices</SelectItem>
             <SelectItem value="pending">Pending</SelectItem>
             <SelectItem value="paid">Paid</SelectItem>
+            <SelectItem value="partial">Half Paid</SelectItem>
             <SelectItem value="cancelled">Cancelled</SelectItem>
           </SelectContent>
         </Select>
+        {/* SMS Reminder Button */}
+        <Button
+          variant="outline"
+          onClick={() => setSmsOpen(true)}
+          className="gap-2 border-purple-500/40 text-purple-400 hover:bg-purple-500/10 hover:text-purple-300 hover:border-purple-400"
+        >
+          <MessageSquare className="h-4 w-4" />
+          Send Reminders
+          {items.filter((i) => i.status !== "paid").length > 0 && (
+            <span className="bg-purple-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5">
+              {items.filter((i) => i.status !== "paid").length}
+            </span>
+          )}
+        </Button>
         <div className="w-full sm:w-auto sm:ml-auto">
           <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetForm(); }}>
             <DialogTrigger asChild>
@@ -212,42 +323,23 @@ export default function Invoices() {
                       <Label className="text-xs text-muted-foreground mb-1">Customer *</Label>
                       <Popover open={customerOpen} onOpenChange={setCustomerOpen}>
                         <PopoverTrigger asChild>
-                          <Button
-                            variant="outline"
-                            role="combobox"
-                            aria-expanded={customerOpen}
-                            className="w-full justify-between font-normal"
-                          >
+                          <Button variant="outline" role="combobox" aria-expanded={customerOpen} className="w-full justify-between font-normal">
                             {form.customer_id
-                              ? (() => {
-                                  const sc = customers.find((c) => c.id === form.customer_id);
-                                  return sc ? `${sc.customer_number} — ${sc.name}` : "Select customer...";
-                                })()
+                              ? (() => { const sc = customers.find((c) => c.id === form.customer_id); return sc ? `${sc.customer_number} — ${sc.name}` : "Select customer..."; })()
                               : "Select customer..."}
                             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                           </Button>
                         </PopoverTrigger>
                         <PopoverContent className="w-[400px] p-0" align="start">
                           <Command>
-                            <CommandInput placeholder="Search customer (name, phone, GSTIN)..." />
+                            <CommandInput placeholder="Search customer..." />
                             <CommandList>
                               <CommandEmpty>No customer found.</CommandEmpty>
                               <CommandGroup>
                                 {customers.map((c) => (
-                                  <CommandItem
-                                    key={c.id}
-                                    value={`${c.customer_number} ${c.name} ${c.phone || ""} ${c.gst_number || ""}`}
-                                    onSelect={() => {
-                                      setForm({ ...form, customer_id: c.id });
-                                      setCustomerOpen(false);
-                                    }}
-                                  >
-                                    <Check
-                                      className={cn(
-                                        "mr-2 h-4 w-4",
-                                        form.customer_id === c.id ? "opacity-100" : "opacity-0"
-                                      )}
-                                    />
+                                  <CommandItem key={c.id} value={`${c.customer_number} ${c.name} ${c.phone || ""} ${c.gst_number || ""}`}
+                                    onSelect={() => { setForm({ ...form, customer_id: c.id }); setCustomerOpen(false); }}>
+                                    <Check className={cn("mr-2 h-4 w-4", form.customer_id === c.id ? "opacity-100" : "opacity-0")} />
                                     {c.customer_number} — {c.name}
                                   </CommandItem>
                                 ))}
@@ -267,7 +359,7 @@ export default function Invoices() {
                       📍 {selectedCustomer.address || "No address"} · 📞 {selectedCustomer.phone || "No phone"}
                     </div>
                   )}
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div><Label className="text-xs text-muted-foreground">Billing Date</Label><Input type="date" className="mt-1" value={form.billing_date} onChange={(e) => setForm({ ...form, billing_date: e.target.value })} /></div>
                     <div><Label className="text-xs text-muted-foreground">Return Date</Label><Input type="date" className="mt-1" value={form.return_date} onChange={(e) => setForm({ ...form, return_date: e.target.value })} /></div>
                     <div><Label className="text-xs text-muted-foreground">CGST %</Label><Input type="number" className="mt-1" value={form.cgst_rate} onChange={(e) => setForm({ ...form, cgst_rate: e.target.value })} /></div>
@@ -293,7 +385,6 @@ export default function Invoices() {
 
                   {lines.map((l, i) => (
                     <div key={i} className="rounded-xl border border-border/50 bg-secondary/15 p-4 space-y-3">
-                      {/* Line header */}
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Item #{i + 1}</span>
                         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => removeLine(i)}>
@@ -301,14 +392,11 @@ export default function Invoices() {
                         </Button>
                       </div>
 
-                      {/* Row 1: Type + Description + HSN + Qty + Rate */}
                       <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
                         <div className="sm:col-span-1">
                           <Label className="text-[10px] text-muted-foreground">Cylinder Type *</Label>
                           <Select value={l.type_id} onValueChange={(v) => updateLine(i, { type_id: v })}>
-                            <SelectTrigger className="mt-1 h-9">
-                              <SelectValue placeholder="Select type" />
-                            </SelectTrigger>
+                            <SelectTrigger className="mt-1 h-9"><SelectValue placeholder="Select type" /></SelectTrigger>
                             <SelectContent>
                               {types.map((t) => (
                                 <SelectItem key={t.id} value={t.id}>
@@ -339,47 +427,35 @@ export default function Invoices() {
                         </div>
                       </div>
 
-                      {/* Row 2: Cylinder numbers */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-border/30">
                         <div>
-                          <Label className="text-[10px] text-success flex items-center gap-1 mb-1">
+                          <Label className="text-[10px] text-emerald-400 flex items-center gap-1 mb-1">
                             <ArrowDownToLine className="h-3 w-3" /> Issued Cylinder Numbers
                           </Label>
-                          <Input
-                            className="font-mono text-xs h-9"
-                            value={l.issued_numbers}
-                            onChange={(e) => updateLine(i, { issued_numbers: e.target.value })}
-                            placeholder="e.g. 5, 6, 42, 100"
-                          />
+                          <Input className="font-mono text-xs h-9" value={l.issued_numbers} onChange={(e) => updateLine(i, { issued_numbers: e.target.value })} placeholder="e.g. 5, 6, 42, 100" />
                           {l.issued_numbers && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {parseCylNums(l.issued_numbers).map((n) => (
-                                <span key={n} className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-success/15 text-success">#{n}</span>
+                                <span key={n} className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-400">#{n}</span>
                               ))}
                             </div>
                           )}
                         </div>
                         <div>
-                          <Label className="text-[10px] text-warning flex items-center gap-1 mb-1">
+                          <Label className="text-[10px] text-amber-400 flex items-center gap-1 mb-1">
                             <ArrowUpFromLine className="h-3 w-3" /> Returned Cylinder Numbers
                           </Label>
-                          <Input
-                            className="font-mono text-xs h-9"
-                            value={l.returned_numbers}
-                            onChange={(e) => updateLine(i, { returned_numbers: e.target.value })}
-                            placeholder="e.g. 3, 4 (empty returned)"
-                          />
+                          <Input className="font-mono text-xs h-9" value={l.returned_numbers} onChange={(e) => updateLine(i, { returned_numbers: e.target.value })} placeholder="e.g. 3, 4 (empty returned)" />
                           {l.returned_numbers && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {parseCylNums(l.returned_numbers).map((n) => (
-                                <span key={n} className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-warning/15 text-warning">#{n}</span>
+                                <span key={n} className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/15 text-amber-400">#{n}</span>
                               ))}
                             </div>
                           )}
                         </div>
                       </div>
 
-                      {/* Subtotal for this line */}
                       <div className="text-right text-xs text-muted-foreground">
                         Line total: <span className="font-mono font-semibold text-foreground">₹{(Number(l.quantity) * Number(l.rate)).toLocaleString()}</span>
                       </div>
@@ -387,15 +463,15 @@ export default function Invoices() {
                   ))}
                 </div>
 
-                {/* Outstanding summary */}
+                {/* Cylinder summary */}
                 {(allIssued.length > 0 || allReturned.length > 0) && (
                   <div className="rounded-xl border border-border/50 bg-secondary/20 p-3 space-y-1.5">
                     <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Cylinder Summary</div>
                     <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs">
-                      <span className="text-success font-semibold">↓ Issued ({allIssued.length}): <span className="font-mono">{allIssued.join(", ") || "—"}</span></span>
-                      <span className="text-warning font-semibold">↑ Returned ({allReturned.length}): <span className="font-mono">{allReturned.join(", ") || "—"}</span></span>
+                      <span className="text-emerald-400 font-semibold">↓ Issued ({allIssued.length}): <span className="font-mono">{allIssued.join(", ") || "—"}</span></span>
+                      <span className="text-amber-400 font-semibold">↑ Returned ({allReturned.length}): <span className="font-mono">{allReturned.join(", ") || "—"}</span></span>
                       {allIssued.filter((n) => !allReturned.includes(n)).length > 0 && (
-                        <span className="text-destructive font-semibold">⚠ Outstanding: <span className="font-mono">{allIssued.filter((n) => !allReturned.includes(n)).join(", ")}</span></span>
+                        <span className="text-rose-400 font-semibold">⚠ Outstanding: <span className="font-mono">{allIssued.filter((n) => !allReturned.includes(n)).join(", ")}</span></span>
                       )}
                     </div>
                   </div>
@@ -404,23 +480,117 @@ export default function Invoices() {
                 {/* ── SECTION 3: Amounts ── */}
                 <div className="rounded-xl border border-border/50 bg-secondary/20 p-4 space-y-3">
                   <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Amounts</div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-1 gap-3">
                     <div><Label className="text-xs text-muted-foreground">Discount (₹)</Label><Input type="number" className="mt-1" value={form.discount} onChange={(e) => setForm({ ...form, discount: e.target.value })} /></div>
-                    <div><Label className="text-xs text-muted-foreground">Deposit (₹)</Label><Input type="number" className="mt-1" value={form.deposit_amount} onChange={(e) => setForm({ ...form, deposit_amount: e.target.value })} /></div>
                   </div>
-                  {/* Totals */}
                   <div className="rounded-lg bg-secondary/40 p-3 space-y-1.5 font-mono text-sm">
                     <AmtRow k="Subtotal" v={totals.subtotal} />
                     {totals.discount > 0 && <AmtRow k="Discount" v={-totals.discount} />}
                     <AmtRow k="Taxable" v={totals.taxable} bold />
                     <AmtRow k={`CGST @ ${form.cgst_rate}%`} v={totals.cgst} />
                     <AmtRow k={`SGST @ ${form.sgst_rate}%`} v={totals.sgst} />
-                    {totals.deposit > 0 && <AmtRow k="Deposit" v={totals.deposit} />}
                     {totals.roundoff !== 0 && <AmtRow k="Round off" v={totals.roundoff} />}
                     <div className="border-t border-border/60 pt-2 mt-1">
                       <AmtRow k="TOTAL" v={totals.total} bold big />
                     </div>
                   </div>
+                </div>
+
+                {/* ── SECTION 4: Payment Status ── */}
+                <div className="rounded-xl border border-border/50 bg-secondary/20 p-4 space-y-4">
+                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Payment</div>
+
+                  {/* 3 toggle buttons */}
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["paid", "partial", "unpaid"] as PaymentStatus[]).map((s) => {
+                      const st = PAY_STATUS_STYLES[s];
+                      const active = form.payment_status === s;
+                      return (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setForm({ ...form, payment_status: s })}
+                          className={cn(
+                            "flex flex-col items-center gap-1.5 rounded-xl border-2 py-3 px-2 transition-all duration-200 text-xs font-bold uppercase tracking-wider",
+                            active
+                              ? `${st.bg} ${st.text} border-current scale-[1.02] shadow-md`
+                              : "border-border/40 bg-secondary/20 text-muted-foreground hover:border-border hover:bg-secondary/40"
+                          )}
+                        >
+                          <st.icon className="h-4 w-4" />
+                          {st.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Half-paid amount entry */}
+                  {form.payment_status === "partial" && (
+                    <div className="space-y-3 pt-2 border-t border-border/40">
+                      <div className="flex items-center gap-2 text-amber-400 text-xs font-semibold">
+                        <Banknote className="h-4 w-4" />
+                        Enter partial payment details
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Amount Paid (₹)</Label>
+                          <Input
+                            type="number"
+                            className="mt-1 font-mono border-amber-500/40 focus-visible:ring-amber-500/40"
+                            value={form.amount_paid}
+                            onChange={(e) => setForm({ ...form, amount_paid: e.target.value })}
+                            placeholder="0"
+                            max={totals.total}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Payment Date</Label>
+                          <Input type="date" className="mt-1" value={form.payment_date} onChange={(e) => setForm({ ...form, payment_date: e.target.value })} />
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Method</Label>
+                          <Select value={form.payment_method} onValueChange={(v) => setForm({ ...form, payment_method: v })}>
+                            <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="Cash">Cash</SelectItem>
+                              <SelectItem value="UPI / GPay / PhonePe">UPI / GPay / PhonePe</SelectItem>
+                              <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                              <SelectItem value="Cheque">Cheque</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      {/* Balance indicator */}
+                      {Number(form.amount_paid) > 0 && (
+                        <div className="flex items-center justify-between rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-sm font-mono">
+                          <span className="text-amber-400 font-semibold">Paid: ₹{totals.paid.toLocaleString()}</span>
+                          <span className="text-rose-400 font-semibold">Balance: ₹{totals.balance.toLocaleString()}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Full paid — show payment date */}
+                  {form.payment_status === "paid" && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-border/40">
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Payment Date</Label>
+                        <Input type="date" className="mt-1" value={form.payment_date} onChange={(e) => setForm({ ...form, payment_date: e.target.value })} />
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Method</Label>
+                        <Select value={form.payment_method} onValueChange={(v) => setForm({ ...form, payment_method: v })}>
+                          <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Cash">Cash</SelectItem>
+                            <SelectItem value="UPI / GPay / PhonePe">UPI / GPay / PhonePe</SelectItem>
+                            <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                            <SelectItem value="Cheque">Cheque</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -446,39 +616,59 @@ export default function Invoices() {
                 <th className="text-left px-4 py-3">Invoice #</th>
                 <th className="text-left px-4 py-3">Date</th>
                 <th className="text-left px-4 py-3">Customer</th>
-                <th className="text-left px-4 py-3">GSTIN</th>
                 <th className="text-left px-4 py-3">Issued #</th>
-                <th className="text-left px-4 py-3">Returned #</th>
                 <th className="text-right px-4 py-3">Total</th>
-                <th className="text-left px-4 py-3">Status</th>
+                <th className="text-right px-4 py-3">Paid</th>
+                <th className="text-right px-4 py-3">Balance</th>
+                <th className="text-left px-4 py-3">Payment</th>
                 <th className="text-right px-4 py-3">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((i) => {
                 const issued: number[] = i.issued_cylinder_numbers ?? [];
-                const returned: number[] = i.returned_cylinder_numbers ?? [];
+                const payStatus: PaymentStatus = i.payment_status ?? (i.status === "paid" ? "paid" : "unpaid");
+                const st = PAY_STATUS_STYLES[payStatus] ?? PAY_STATUS_STYLES.unpaid;
+                const balance = Number(i.balance_amount ?? 0);
+                const amtPaid = Number(i.amount_paid ?? (i.status === "paid" ? (i.total ?? i.amount) : 0));
                 return (
                   <tr key={i.id} className="border-t border-border/40 hover:bg-secondary/30">
                     <td className="px-4 py-3 font-mono font-semibold text-primary cursor-pointer" onClick={() => setViewing(i)}>{i.invoice_number}</td>
                     <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{new Date(i.billing_date ?? i.issued_at).toLocaleDateString("en-IN")}</td>
-                    <td className="px-4 py-3">{i.customers?.name}<div className="text-[10px] font-mono text-muted-foreground">{i.customers?.customer_number}</div></td>
-                    <td className="px-4 py-3 font-mono text-xs">{i.gst_number ?? "—"}</td>
                     <td className="px-4 py-3">
-                      {issued.length > 0 ? <div className="flex flex-wrap gap-1">{issued.map((n) => <span key={n} className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-success/15 text-success">#{n}</span>)}</div> : <span className="text-muted-foreground text-xs">—</span>}
+                      {i.customers?.name}
+                      <div className="text-[10px] font-mono text-muted-foreground">{i.customers?.customer_number}</div>
                     </td>
                     <td className="px-4 py-3">
-                      {returned.length > 0 ? <div className="flex flex-wrap gap-1">{returned.map((n) => <span key={n} className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-warning/15 text-warning">#{n}</span>)}</div> : <span className="text-muted-foreground text-xs">—</span>}
+                      {issued.length > 0
+                        ? <div className="flex flex-wrap gap-1">{issued.map((n) => <span key={n} className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-400">#{n}</span>)}</div>
+                        : <span className="text-muted-foreground text-xs">—</span>}
                     </td>
                     <td className="px-4 py-3 text-right font-mono font-semibold">₹{Number(i.total ?? i.amount).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right font-mono text-emerald-400 font-semibold">
+                      {amtPaid > 0 ? `₹${amtPaid.toLocaleString()}` : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono font-semibold">
+                      {balance > 0 ? <span className="text-rose-400">₹{balance.toLocaleString()}</span> : <span className="text-emerald-400">—</span>}
+                    </td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${i.status === "paid" ? "bg-success/15 text-success" : i.status === "pending" ? "bg-warning/15 text-warning" : "bg-muted text-muted-foreground"}`}>
-                        {i.status === "paid" ? <CheckCircle2 className="h-3 w-3" /> : i.status === "pending" ? <Clock className="h-3 w-3" /> : <X className="h-3 w-3" />}
-                        {i.status}
+                      <span className={cn("inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider", st.bg, st.text)}>
+                        <st.icon className="h-3 w-3" />
+                        {st.label}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right space-x-1">
                       <Button size="sm" variant="ghost" onClick={() => setViewing(i)}><Printer className="h-3 w-3" /></Button>
+                      {i.status !== "paid" && (
+                        <Button
+                          size="sm" variant="ghost"
+                          title={i.customers?.phone ? "Send SMS reminder" : "No phone number"}
+                          className={i.customers?.phone ? "text-purple-400 hover:text-purple-300 hover:bg-purple-500/10" : "opacity-30 cursor-not-allowed"}
+                          onClick={() => sendSmsReminder(i)}
+                        >
+                          <MessageSquare className="h-3 w-3" />
+                        </Button>
+                      )}
                       {i.status !== "paid" && <Button size="sm" variant="ghost" onClick={() => setStatus(i.id, "paid")}>Mark paid</Button>}
                       {i.status === "paid" && <Button size="sm" variant="ghost" onClick={() => setStatus(i.id, "pending")}>Undo</Button>}
                     </td>
@@ -494,52 +684,141 @@ export default function Invoices() {
       {/* Print view dialog */}
       <Dialog open={!!viewing} onOpenChange={(v) => !v && setViewing(null)}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          {viewing && (
-            <div className="space-y-4">
-              <div className="flex items-start justify-between border-b border-border/60 pb-3">
-                <div><h2 className="text-xl font-bold">TAX INVOICE</h2><p className="text-xs font-mono text-muted-foreground">{viewing.invoice_number}</p></div>
-                <div className="text-right text-xs">
-                  <div>Date: {new Date(viewing.billing_date ?? viewing.issued_at).toLocaleDateString("en-IN")}</div>
-                  {viewing.return_date && <div>Return: {new Date(viewing.return_date).toLocaleDateString("en-IN")}</div>}
+          {viewing && (() => {
+            const vPayStatus: PaymentStatus = viewing.payment_status ?? (viewing.status === "paid" ? "paid" : "unpaid");
+            const vSt = PAY_STATUS_STYLES[vPayStatus] ?? PAY_STATUS_STYLES.unpaid;
+            return (
+              <div className="space-y-4">
+                <div className="flex items-start justify-between border-b border-border/60 pb-3">
+                  <div><h2 className="text-xl font-bold">TAX INVOICE</h2><p className="text-xs font-mono text-muted-foreground">{viewing.invoice_number}</p></div>
+                  <div className="text-right text-xs">
+                    <div>Date: {new Date(viewing.billing_date ?? viewing.issued_at).toLocaleDateString("en-IN")}</div>
+                    {viewing.return_date && <div>Return: {new Date(viewing.return_date).toLocaleDateString("en-IN")}</div>}
+                  </div>
                 </div>
-              </div>
-              <div>
-                <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Bill to</div>
-                <div className="font-semibold">{viewing.customers?.name} ({viewing.customers?.customer_number})</div>
-                {viewing.customers?.address && <div className="text-xs text-muted-foreground">{viewing.customers.address}</div>}
-                {viewing.gst_number && <div className="text-xs font-mono">GSTIN: {viewing.gst_number}</div>}
-              </div>
-              {((viewing.issued_cylinder_numbers ?? []).length > 0 || (viewing.returned_cylinder_numbers ?? []).length > 0) && (
-                <div className="p-3 rounded-lg border border-border/40 bg-secondary/20 space-y-2">
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Cylinder Details</div>
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div>
-                      <div className="font-semibold text-success mb-1">↓ Issued ({(viewing.issued_cylinder_numbers ?? []).length})</div>
-                      <div className="flex flex-wrap gap-1">{(viewing.issued_cylinder_numbers ?? []).map((n: number) => <span key={n} className="px-1.5 py-0.5 rounded bg-success/15 text-success text-[10px] font-bold font-mono">#{n}</span>)}</div>
-                    </div>
-                    <div>
-                      <div className="font-semibold text-warning mb-1">↑ Returned ({(viewing.returned_cylinder_numbers ?? []).length})</div>
-                      <div className="flex flex-wrap gap-1">{(viewing.returned_cylinder_numbers ?? []).map((n: number) => <span key={n} className="px-1.5 py-0.5 rounded bg-warning/15 text-warning text-[10px] font-bold font-mono">#{n}</span>)}</div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Bill to</div>
+                  <div className="font-semibold">{viewing.customers?.name} ({viewing.customers?.customer_number})</div>
+                  {viewing.customers?.address && <div className="text-xs text-muted-foreground">{viewing.customers.address}</div>}
+                  {viewing.gst_number && <div className="text-xs font-mono">GSTIN: {viewing.gst_number}</div>}
+                </div>
+                {((viewing.issued_cylinder_numbers ?? []).length > 0 || (viewing.returned_cylinder_numbers ?? []).length > 0) && (
+                  <div className="p-3 rounded-lg border border-border/40 bg-secondary/20 space-y-2">
+                    <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Cylinder Details</div>
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <div className="font-semibold text-emerald-400 mb-1">↓ Issued ({(viewing.issued_cylinder_numbers ?? []).length})</div>
+                        <div className="flex flex-wrap gap-1">{(viewing.issued_cylinder_numbers ?? []).map((n: number) => <span key={n} className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 text-[10px] font-bold font-mono">#{n}</span>)}</div>
+                      </div>
+                      <div>
+                        <div className="font-semibold text-amber-400 mb-1">↑ Returned ({(viewing.returned_cylinder_numbers ?? []).length})</div>
+                        <div className="flex flex-wrap gap-1">{(viewing.returned_cylinder_numbers ?? []).map((n: number) => <span key={n} className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[10px] font-bold font-mono">#{n}</span>)}</div>
+                      </div>
                     </div>
                   </div>
-                  {(() => {
-                    const out = (viewing.issued_cylinder_numbers ?? []).filter((n: number) => !(viewing.returned_cylinder_numbers ?? []).includes(n));
-                    return out.length > 0 ? <div className="text-xs text-destructive font-semibold">⚠ Outstanding: <span className="font-mono">{out.map((n: number) => `#${n}`).join(", ")}</span></div> : null;
-                  })()}
+                )}
+                <div className="p-3 rounded-lg bg-secondary/50 space-y-1.5 font-mono text-sm">
+                  <AmtRow k="Taxable" v={Number(viewing.taxable_amount)} />
+                  {Number(viewing.discount) > 0 && <AmtRow k="Discount" v={-Number(viewing.discount)} />}
+                  <AmtRow k={`CGST @ ${viewing.cgst_rate}%`} v={Number(viewing.cgst_amount)} />
+                  <AmtRow k={`SGST @ ${viewing.sgst_rate}%`} v={Number(viewing.sgst_amount)} />
+                  {Number(viewing.roundoff) !== 0 && <AmtRow k="Round off" v={Number(viewing.roundoff)} />}
+                  <div className="border-t border-border/60 pt-2"><AmtRow k="TOTAL" v={Number(viewing.total)} bold big /></div>
                 </div>
-              )}
-              <div className="p-3 rounded-lg bg-secondary/50 space-y-1.5 font-mono text-sm">
-                <AmtRow k="Taxable" v={Number(viewing.taxable_amount)} />
-                <AmtRow k="Discount" v={-Number(viewing.discount)} />
-                <AmtRow k={`CGST @ ${viewing.cgst_rate}%`} v={Number(viewing.cgst_amount)} />
-                <AmtRow k={`SGST @ ${viewing.sgst_rate}%`} v={Number(viewing.sgst_amount)} />
-                <AmtRow k="Deposit" v={Number(viewing.deposit_amount)} />
-                <AmtRow k="Round off" v={Number(viewing.roundoff)} />
-                <div className="border-t border-border/60 pt-2"><AmtRow k="TOTAL" v={Number(viewing.total)} bold big /></div>
+                {/* Payment status */}
+                <div className={cn("rounded-lg border px-4 py-3 flex items-center justify-between", vSt.bg, `border-current`)}>
+                  <div className={cn("flex items-center gap-2 font-semibold text-sm", vSt.text)}>
+                    <vSt.icon className="h-4 w-4" />
+                    {vSt.label}
+                    {viewing.payment_date && <span className="font-mono text-xs opacity-70">· {new Date(viewing.payment_date).toLocaleDateString("en-IN")}</span>}
+                  </div>
+                  {Number(viewing.balance_amount) > 0 && (
+                    <span className="text-rose-400 font-mono font-bold text-sm">Balance: ₹{Number(viewing.balance_amount).toLocaleString()}</span>
+                  )}
+                </div>
+                <Button onClick={() => window.print()} variant="outline" className="w-full"><Printer className="h-4 w-4 mr-2" />Print Invoice</Button>
               </div>
-              <Button onClick={() => window.print()} variant="outline" className="w-full"><Printer className="h-4 w-4 mr-2" />Print Invoice</Button>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Bulk SMS Reminder Modal ── */}
+      <Dialog open={smsOpen} onOpenChange={setSmsOpen}>
+        <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-purple-400">
+              <MessageSquare className="h-5 w-5" />
+              SMS Reminders
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            {/* Info banner */}
+            <div className="rounded-xl bg-purple-500/10 border border-purple-500/30 px-4 py-3 text-sm text-purple-300 space-y-1">
+              <p className="font-semibold">📱 How it works (100% Free)</p>
+              <p className="text-xs text-purple-300/70">Tap <strong>Send SMS</strong> on any row — your phone's SMS app will open with the message pre-filled. Just hit send. No internet required, no third-party service, completely free.</p>
             </div>
-          )}
+
+            {/* Bulk copy */}
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">
+                {items.filter((i) => i.status !== "paid").length} pending invoice(s)
+              </span>
+              <Button variant="outline" size="sm" onClick={copyAllSms} className="gap-2 text-xs">
+                <Copy className="h-3.5 w-3.5" /> Copy All Messages
+              </Button>
+            </div>
+
+            {/* List */}
+            {items.filter((i) => i.status !== "paid").length === 0 ? (
+              <div className="text-center py-10 text-muted-foreground text-sm">🎉 All invoices are paid!</div>
+            ) : (
+              <div className="space-y-3">
+                {items.filter((i) => i.status !== "paid").map((i) => {
+                  const payStatus: PaymentStatus = i.payment_status ?? "unpaid";
+                  const st = PAY_STATUS_STYLES[payStatus] ?? PAY_STATUS_STYLES.unpaid;
+                  const balance = Number(i.balance_amount ?? i.total ?? i.amount ?? 0);
+                  const phone = i.customers?.phone;
+                  const msg = buildSmsMessage(i, company);
+                  return (
+                    <div key={i.id} className="rounded-xl border border-border/50 bg-secondary/20 p-3 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="font-semibold text-sm">{i.customers?.name}</div>
+                          <div className="text-xs text-muted-foreground font-mono">{i.invoice_number} · {phone ?? <span className="text-rose-400">No phone</span>}</div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold", st.bg, st.text)}>
+                            <st.icon className="h-2.5 w-2.5" />{st.label}
+                          </span>
+                          <span className="text-rose-400 font-mono font-bold text-xs">₹{balance.toLocaleString()}</span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-muted-foreground bg-secondary/40 rounded-lg px-3 py-2 leading-relaxed">{msg}</p>
+                      <div className="flex gap-2">
+                        {phone ? (
+                          <a
+                            href={smsLink(phone, msg)}
+                            className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-purple-500/15 border border-purple-500/40 text-purple-400 text-xs font-bold py-2 hover:bg-purple-500/25 transition-colors"
+                          >
+                            <Send className="h-3 w-3" /> Send SMS to {phone}
+                          </a>
+                        ) : (
+                          <span className="flex-1 text-center text-xs text-muted-foreground py-2">No phone number saved for this customer</span>
+                        )}
+                        <Button
+                          size="sm" variant="ghost" className="text-xs text-muted-foreground"
+                          onClick={() => { navigator.clipboard.writeText(msg); toast.success("Message copied!"); }}
+                        >
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

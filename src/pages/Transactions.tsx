@@ -9,7 +9,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowDown, ArrowUp, Plus, PackagePlus } from "lucide-react";
 import { toast } from "sonner";
-
 import { useCompany } from "@/hooks/useCompany";
 
 const TYPE_LABEL: Record<string, string> = { issue: "Issue", return: "Return", incoming: "Incoming Stock" };
@@ -35,20 +34,19 @@ export default function Transactions() {
       .select("*, cylinders(serial_number), customers(name), cylinder_types(code,name,price)")
       .order("occurred_at", { ascending: false })
       .limit(200);
-    const scoped = (data ?? []).filter((t: any) => !t.company_id || t.company_id === company.id);
-    setItems(scoped);
+    const all = data ?? [];
+    setItems(all.some((r: any) => r.company) ? all.filter((r: any) => r.company === company) : all);
   };
   const loadRefs = async () => {
     const [{ data: cyl }, { data: cust }] = await Promise.all([
-      supabase.from("cylinders").select("id, serial_number, type_id, status, company_id, cylinder_types(code,price)").order("serial_number"),
-      supabase.from("customers").select("id, name, company_id").order("name"),
+      supabase.from("cylinders").select("id, serial_number, type_id, status, cylinder_types(code,price)").order("serial_number"),
+      supabase.from("customers").select("id, name").order("name"),
     ]);
-    const scopedCyl = (cyl ?? []).filter((c: any) => !c.company_id || c.company_id === company.id);
-    const scopedCust = (cust ?? []).filter((c: any) => !c.company_id || c.company_id === company.id);
-    setCylinders(scopedCyl);
-    setCustomers(scopedCust);
+    setCylinders(cyl ?? []);
+    const allCust = cust ?? [];
+    setCustomers(allCust.some((r: any) => r.company) ? allCust.filter((r: any) => r.company === company) : allCust);
   };
-  useEffect(() => { load(); loadRefs(); }, [company.id]);
+  useEffect(() => { load(); loadRefs(); }, [company]);
 
   const onPickCylinder = (id: string) => {
     const c = cylinders.find((x) => x.id === id);
@@ -74,24 +72,22 @@ export default function Transactions() {
       type_id: cyl.type_id,
       amount: Number(form.amount) || 0,
       notes: form.notes.trim() || null,
-      company_id: company.id,
+      company,
     };
     const { data: txn, error } = await supabase.from("transactions").insert(txnPayload).select().single();
     if (error) return toast.error(error.message);
 
-    // Update cylinder status
     const newStatus = form.txn_type === "issue" ? "issued" : form.txn_type === "return" ? "in_stock" : "in_stock";
     const newCustomer = form.txn_type === "issue" ? form.customer_id : null;
     await supabase.from("cylinders").update({ status: newStatus as any, current_customer_id: newCustomer }).eq("id", form.cylinder_id);
 
-    // Optionally create invoice
     if (form.create_invoice && form.txn_type === "issue" && form.customer_id && Number(form.amount) > 0) {
-      await supabase.from("invoices").insert({
+      await (supabase.from("invoices") as any).insert({
         customer_id: form.customer_id,
         transaction_id: txn.id,
         amount: Number(form.amount),
         status: "pending",
-        company_id: company.id,
+        company,
       });
     }
 

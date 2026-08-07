@@ -10,8 +10,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, Search, Trash2, Pencil, Package, TrendingUp, Wrench, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 
-import { useCompany } from "@/hooks/useCompany";
-
 const STATUS = ["in_stock", "issued", "maintenance", "retired"] as const;
 const STATUS_COLOR: Record<string, string> = {
   in_stock: "bg-success/15 text-success border-success/30",
@@ -21,7 +19,6 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export default function Cylinders() {
-  const { company } = useCompany();
   const [items, setItems] = useState<any[]>([]);
   const [types, setTypes] = useState<any[]>([]);
   const [search, setSearch] = useState("");
@@ -42,15 +39,14 @@ export default function Cylinders() {
       .from("cylinders") as any)
       .select("*, cylinder_types(name,code), customers(name)")
       .order("cylinder_number", { ascending: true, nullsFirst: false });
-    const scoped = (data ?? []).filter((c: any) => !c.company_id || c.company_id === company.id);
-    setItems(scoped);
+    setItems(data ?? []);
   };
 
   const loadTypes = async () => {
     const { data } = await supabase.from("cylinder_types").select("id, name, code").order("name");
     setTypes(data ?? []);
   };
-  useEffect(() => { load(); loadTypes(); }, [company.id]);
+  useEffect(() => { load(); loadTypes(); }, []);
 
   const openNew = () => {
     setEdit(null);
@@ -81,7 +77,6 @@ export default function Cylinders() {
       type_id: form.type_id,
       status: form.status as any,
       notes: form.notes.trim() || null,
-      company_id: company.id,
     };
     const { error } = edit
       ? await supabase.from("cylinders").update(payload).eq("id", edit.id)

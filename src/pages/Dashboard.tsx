@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useCompany } from "@/hooks/useCompany";
 import { Card } from "@/components/ui/card";
 import { Cylinder, Users, Receipt, AlertCircle, TrendingUp, Package, AlertTriangle } from "lucide-react";
-
-import { useCompany } from "@/hooks/useCompany";
 
 const OVERDUE_DAYS = 30;
 
@@ -28,46 +27,48 @@ export default function Dashboard() {
     (async () => {
       const cutoff = new Date(Date.now() - OVERDUE_DAYS * 86400000).toISOString();
       const [cyl, cust, inv, txn, overdue] = await Promise.all([
-        supabase.from("cylinders").select("status, company_id"),
-        supabase.from("customers").select("id, company_id"),
-        supabase.from("invoices").select("total, amount, status, paid_at, company_id"),
-        supabase
-          .from("transactions")
-          .select("*, cylinders(serial_number), customers(name), cylinder_types(name,code)")
+        supabase.from("cylinders").select("status"),
+        supabase.from("customers").select("id", { count: "exact" }),
+        supabase.from("invoices").select("total, amount, status, paid_at, company"),
+        supabase.from("transactions")
+          .select("*, cylinders(serial_number), customers(name), cylinder_types(name,code), company")
           .order("occurred_at", { ascending: false })
-          .limit(20),
+          .limit(50),
         supabase
           .from("cylinders")
-          .select("id, serial_number, issued_at, company_id, customers:current_customer_id(name, phone, customer_number)")
+          .select("id, serial_number, issued_at, customers:current_customer_id(name, phone, customer_number)")
           .eq("status", "issued")
           .lt("issued_at", cutoff)
           .order("issued_at"),
       ]);
-
-      const cyls = (cyl.data ?? []).filter((c: any) => !c.company_id || c.company_id === company.id);
-      const custs = (cust.data ?? []).filter((c: any) => !c.company_id || c.company_id === company.id);
-      const invs = (inv.data ?? []).filter((i: any) => !i.company_id || i.company_id === company.id);
-      const txns = (txn.data ?? []).filter((t: any) => !t.company_id || t.company_id === company.id).slice(0, 8);
-      const overdues = (overdue.data ?? []).filter((o: any) => !o.company_id || o.company_id === company.id);
-
+      const cyls = cyl.data ?? [];
+      const allInvs = inv.data ?? [];
+      const allTxns = txn.data ?? [];
+      // JS filter by company (works before and after migration)
+      const hasCompanyCol = allInvs.some((r: any) => r.company != null);
+      const invs = hasCompanyCol ? allInvs.filter((r: any) => r.company === company) : allInvs;
+      const txns = allTxns.some((r: any) => r.company != null) ? allTxns.filter((r: any) => r.company === company) : allTxns;
+      const custCount = hasCompanyCol
+        ? (cust.data ?? []).filter((r: any) => r.company === company).length
+        : (cust.count ?? (cust.data ?? []).length);
       const monthStart = new Date();
       monthStart.setDate(1);
       setS({
         total: cyls.length,
         inStock: cyls.filter((c) => c.status === "in_stock").length,
         issued: cyls.filter((c) => c.status === "issued").length,
-        customers: custs.length,
-        pendingInvoices: invs.filter((i) => i.status === "pending").length,
-        pendingAmount: invs.filter((i) => i.status === "pending").reduce((a, b) => a + Number(b.total ?? b.amount), 0),
+        customers: custCount,
+        pendingInvoices: invs.filter((i: any) => i.status === "pending").length,
+        pendingAmount: invs.filter((i: any) => i.status === "pending").reduce((a: number, b: any) => a + Number(b.total ?? b.amount), 0),
         monthRevenue: invs
-          .filter((i) => i.status === "paid" && i.paid_at && new Date(i.paid_at) >= monthStart)
-          .reduce((a, b) => a + Number(b.total ?? b.amount), 0),
-        overdueCount: overdues.length,
+          .filter((i: any) => i.status === "paid" && i.paid_at && new Date(i.paid_at) >= monthStart)
+          .reduce((a: number, b: any) => a + Number(b.total ?? b.amount), 0),
+        overdueCount: (overdue.data ?? []).length,
       });
-      setRecent(txns);
-      setOverdueList(overdues);
+      setRecent(txns.slice(0, 8));
+      setOverdueList(overdue.data ?? []);
     })();
-  }, [company.id]);
+  }, [company]);
 
   const cards = [
     { label: "Total Cylinders", value: s?.total ?? 0, icon: Cylinder, accent: "text-primary" },
