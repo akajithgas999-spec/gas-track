@@ -1,15 +1,21 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useCompany } from "@/hooks/useCompany";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   Download, FileSpreadsheet, Users, Package, Receipt,
-  ShoppingCart, Cylinder, BarChart3, CheckCircle2, Loader2,
+  ShoppingCart, Cylinder, BarChart3, CheckCircle2, Loader2, UserCheck,
+  ChevronsUpDown, Check, Search,
 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 type ExportRange = "all" | "day" | "month" | "year";
 
@@ -31,6 +37,21 @@ export default function ExportData() {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [year, setYear] = useState(String(new Date().getFullYear()));
   const [counts, setCounts] = useState<Record<string, number>>({});
+
+  // ── Single customer export state ────────────────────────────────
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState("");
+  const [customerOpen, setCustomerOpen] = useState(false);
+  const [custLoading, setCustLoading] = useState(false);
+  const [custDone, setCustDone] = useState(false);
+
+  useEffect(() => {
+    (supabase.from("customers") as any)
+      .select("id, customer_number, name, phone, email, gst_number, address, deposit_balance, notes, created_at")
+      .order("customer_number")
+      .then(({ data }: any) => setCustomers(data ?? []));
+  }, []);
+  // ────────────────────────────────────────────────────────────────
 
   // Build a date filter for each table based on range
   const getDateBounds = (): { from: string; to: string } | null => {
@@ -126,6 +147,12 @@ export default function ExportData() {
       const ws0 = XLSX.utils.aoa_to_sheet(summaryData);
       ws0["!cols"] = [{ wch: 30 }, { wch: 25 }];
       XLSX.utils.book_append_sheet(wb, ws0, "Summary");
+
+      // ── Sheet: Customer Statements (Side-by-Side Table matching Image 2) ──
+      if (customers.length > 0) {
+        const wsMulti = buildSideBySideMultiCustomerSheet(customers, invoices, transactions, cylinders);
+        XLSX.utils.book_append_sheet(wb, wsMulti, "Customer Statements");
+      }
 
       // ── Sheet 2: CUSTOMERS ──
       if (customers.length > 0) {
@@ -314,6 +341,392 @@ export default function ExportData() {
     }
   };
 
+  const { company } = useCompany();
+
+  // ── Helper to format date into DD/MM/YYYY ─────────────────────────
+  const formatDateStr = (dateStr: string | null | undefined): string => {
+    if (!dateStr) return "";
+    const clean = dateStr.slice(0, 10);
+    const parts = clean.split("-");
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`; // DD/MM/YYYY
+    }
+    return dateStr;
+  };
+
+  // ── Extract complete statement rows for a customer ─────────────────
+  const getCustomerStatementRows = (
+    cust: any,
+    allInvoices: any[],
+    allTransactions: any[],
+    allCylinders: any[]
+  ) => {
+    const custInvoices = allInvoices.filter((inv) => inv.customer_id === cust.id);
+    const custTxns = allTransactions.filter((t) => t.customer_id === cust.id);
+    const custCyls = allCylinders.filter((c) => c.current_customer_id === cust.id);
+
+    const rows: { issueDate: string; billNo: string; full: string; empty: string; returnDate: string }[] = [];
+    const processedKeys = new Set<string>();
+
+    // 1. Process Invoices
+    custInvoices.forEach((inv: any) => {
+      const issueDateStr = formatDateStr(inv.billing_date);
+      const billNo = inv.invoice_number ?? "";
+      const returnDateStr = formatDateStr(inv.return_date);
+
+      const items = inv.invoice_items ?? [];
+      const issuedNums: (number | string)[] = inv.issued_cylinder_numbers ?? [];
+      const returnedNums: (number | string)[] = inv.returned_cylinder_numbers ?? [];
+
+      let cylIdx = 0;
+      const invRows: { full: string; empty: string; returnDate: string }[] = [];
+
+      if (items.length > 0) {
+        items.forEach((item: any) => {
+          const code = (item.cylinder_types?.code || item.description?.split(" ")[0] || "CYL").trim();
+          const qty = Math.max(1, Number(item.quantity) || 1);
+
+          for (let q = 0; q < qty; q++) {
+            const issuedNum = issuedNums[cylIdx];
+            const returnedNum = returnedNums[cylIdx];
+            cylIdx++;
+
+            let fullVal = "";
+            let emptyVal = "";
+
+            if (issuedNum !== undefined && issuedNum !== null && String(issuedNum).trim() !== "") {
+              const numStr = String(issuedNum).trim();
+              if (code.toUpperCase() === "DA" && !numStr.toUpperCase().startsWith("DA")) {
+                fullVal = `DA-${numStr}`;
+              } else if (numStr.toUpperCase().startsWith("DA") || numStr.includes("-")) {
+                fullVal = numStr;
+              } else {
+                fullVal = `${numStr}-${code}`;
+              }
+            } else {
+              fullVal = `${code}`;
+            }
+
+            if (returnedNum !== undefined && returnedNum !== null && String(returnedNum).trim() !== "") {
+              const retStr = String(returnedNum).trim();
+              if (code.toUpperCase() === "DA" && !retStr.toUpperCase().startsWith("DA")) {
+                emptyVal = `DA-${retStr}`;
+              } else {
+                emptyVal = retStr;
+              }
+            }
+
+            invRows.push({
+              full: fullVal,
+              empty: emptyVal,
+              returnDate: emptyVal ? (returnDateStr || issueDateStr) : "",
+            });
+          }
+        });
+      } else if (issuedNums.length > 0) {
+        issuedNums.forEach((issuedNum, idx) => {
+          const returnedNum = returnedNums[idx];
+          let emptyVal = "";
+          if (returnedNum !== undefined && returnedNum !== null && String(returnedNum).trim() !== "") {
+            emptyVal = String(returnedNum).trim();
+          }
+          invRows.push({
+            full: String(issuedNum),
+            empty: emptyVal,
+            returnDate: emptyVal ? (returnDateStr || issueDateStr) : "",
+          });
+        });
+      }
+
+      invRows.forEach((r, idx) => {
+        processedKeys.add(`${billNo}_${r.full}`);
+        rows.push({
+          issueDate: idx === 0 ? issueDateStr : "",
+          billNo: idx === 0 ? billNo : "",
+          full: r.full,
+          empty: r.empty,
+          returnDate: r.returnDate,
+        });
+      });
+    });
+
+    // 2. Process Transactions (issues/returns not in invoices)
+    custTxns.forEach((t: any) => {
+      if (t.txn_type === "issue") {
+        const code = t.cylinder_types?.code || "CYL";
+        const cylNum = t.cylinders?.cylinder_number || t.cylinders?.serial_number || "";
+        const fullVal = cylNum ? (code.toUpperCase() === "DA" ? `DA-${cylNum}` : `${cylNum}-${code}`) : code;
+        const key = `txn_${t.id}_${fullVal}`;
+        if (!processedKeys.has(key)) {
+          processedKeys.add(key);
+          const retTxn = custTxns.find((rt) => rt.txn_type === "return" && rt.cylinder_id === t.cylinder_id && rt.occurred_at >= t.occurred_at);
+          rows.push({
+            issueDate: formatDateStr(t.occurred_at),
+            billNo: t.notes ? String(t.notes).slice(0, 10) : "",
+            full: fullVal,
+            empty: retTxn ? (code.toUpperCase() === "DA" ? `DA-${retTxn.cylinders?.cylinder_number || ''}` : String(retTxn.cylinders?.cylinder_number || '')) : "",
+            returnDate: retTxn ? formatDateStr(retTxn.occurred_at) : "",
+          });
+        }
+      }
+    });
+
+    // 3. Process current cylinders assigned to customer if missing
+    custCyls.forEach((c: any) => {
+      const code = c.cylinder_types?.code || "CYL";
+      const cylNum = c.cylinder_number || c.serial_number || "";
+      const fullVal = cylNum ? (code.toUpperCase() === "DA" ? `DA-${cylNum}` : `${cylNum}-${code}`) : code;
+      if (!rows.some((r) => r.full === fullVal)) {
+        rows.push({
+          issueDate: formatDateStr(c.issued_at || c.updated_at || c.created_at),
+          billNo: "",
+          full: fullVal,
+          empty: "",
+          returnDate: "",
+        });
+      }
+    });
+
+    return rows;
+  };
+
+  // ── Build Single Customer Statement Sheet ──────────────────────────
+  const buildSingleCustomerStatementSheet = (cust: any, invList: any[], txnList: any[], cylList: any[]) => {
+    const title = cust.name ? cust.name.toUpperCase() : "CUSTOMER STATEMENT";
+    const statementRows = getCustomerStatementRows(cust, invList, txnList, cylList);
+
+    const aoaData: any[][] = [
+      [title, "", "", "", ""],
+      ["DATE", "BILL NO", "FULL", "EMPTY", "DATE"],
+    ];
+
+    if (statementRows.length === 0) {
+      aoaData.push(["—", "No entries", "—", "—", "—"]);
+    } else {
+      statementRows.forEach((r) => {
+        aoaData.push([r.issueDate, r.billNo, r.full, r.empty, r.returnDate]);
+      });
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(aoaData);
+    ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+    ws["!cols"] = [
+      { wch: 16 }, // DATE (Issue)
+      { wch: 14 }, // BILL NO
+      { wch: 18 }, // FULL
+      { wch: 18 }, // EMPTY
+      { wch: 16 }, // DATE (Return)
+    ];
+    return ws;
+  };
+
+  // ── Build Side-by-Side Multi-Customer Statement Sheet (Image 2 format) ──
+  const buildSideBySideMultiCustomerSheet = (custList: any[], invList: any[], txnList: any[], cylList: any[]) => {
+    const aoaData: any[][] = [];
+    const merges: any[] = [];
+    const cols: any[] = [];
+
+    const CHUNK_SIZE = 3; // 3 customers per side-by-side block
+    for (let i = 0; i < custList.length; i += CHUNK_SIZE) {
+      const chunk = custList.slice(i, i + CHUNK_SIZE);
+      const startRowIdx = aoaData.length;
+
+      const titleRow: string[] = [];
+      const headerRow: string[] = [];
+
+      chunk.forEach((cust, cIdx) => {
+        const colStart = cIdx * 6;
+        titleRow[colStart] = cust.name.toUpperCase();
+        for (let s = 1; s < 5; s++) titleRow[colStart + s] = "";
+        titleRow[colStart + 5] = ""; // spacer
+
+        headerRow[colStart + 0] = "DATE";
+        headerRow[colStart + 1] = "BILL NO";
+        headerRow[colStart + 2] = "FULL";
+        headerRow[colStart + 3] = "EMPTY";
+        headerRow[colStart + 4] = "DATE";
+        headerRow[colStart + 5] = ""; // spacer
+
+        merges.push({
+          s: { r: startRowIdx, c: colStart },
+          e: { r: startRowIdx, c: colStart + 4 },
+        });
+      });
+
+      aoaData.push(titleRow);
+      aoaData.push(headerRow);
+
+      const chunkCustomerRows = chunk.map((cust) =>
+        getCustomerStatementRows(cust, invList, txnList, cylList)
+      );
+
+      const maxRows = Math.max(1, ...chunkCustomerRows.map((r) => r.length));
+
+      for (let rIdx = 0; rIdx < maxRows; rIdx++) {
+        const dataRow: string[] = [];
+        chunk.forEach((_, cIdx) => {
+          const colStart = cIdx * 6;
+          const custRow = chunkCustomerRows[cIdx][rIdx];
+          if (custRow) {
+            dataRow[colStart + 0] = custRow.issueDate;
+            dataRow[colStart + 1] = custRow.billNo;
+            dataRow[colStart + 2] = custRow.full;
+            dataRow[colStart + 3] = custRow.empty;
+            dataRow[colStart + 4] = custRow.returnDate;
+          } else {
+            for (let s = 0; s < 5; s++) dataRow[colStart + s] = "";
+          }
+          dataRow[colStart + 5] = "";
+        });
+        aoaData.push(dataRow);
+      }
+
+      // Empty row separator
+      aoaData.push([]);
+    }
+
+    for (let c = 0; c < Math.min(custList.length, 3) * 6; c++) {
+      if (c % 6 === 5) cols.push({ wch: 3 });
+      else cols.push({ wch: 15 });
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(aoaData);
+    ws["!merges"] = merges;
+    ws["!cols"] = cols;
+    return ws;
+  };
+
+  // ── Export single customer ───────────────────────────────────────
+  const exportSingleCustomer = async () => {
+    if (!selectedCustomerId) return toast.error("Please select a customer");
+    const cust = customers.find((c) => c.id === selectedCustomerId);
+    if (!cust) return;
+    setCustLoading(true); setCustDone(false);
+    try {
+      const [invoices, transactions, deposits, cylinders] = await Promise.all([
+        (supabase.from("invoices") as any)
+          .select("*, invoice_items(*, cylinder_types(code, name))")
+          .eq("customer_id", selectedCustomerId)
+          .order("billing_date", { ascending: true })
+          .then((r: any) => r.data ?? []),
+        (supabase.from("transactions") as any).select("*").eq("customer_id", selectedCustomerId).order("occurred_at", { ascending: false }).then((r: any) => r.data ?? []),
+        (supabase.from("customer_deposits") as any).select("*").eq("customer_id", selectedCustomerId).order("occurred_at", { ascending: false }).then((r: any) => r.data ?? []),
+        (supabase.from("cylinders") as any).select("*, cylinder_types(name,code)").eq("current_customer_id", selectedCustomerId).then((r: any) => r.data ?? []),
+      ]);
+
+      const wb = XLSX.utils.book_new();
+
+      // Sheet 1 — Cylinder Statement (Matching Exact User Format)
+      const wsStatement = buildSingleCustomerStatementSheet(cust, invoices, transactions, cylinders);
+      XLSX.utils.book_append_sheet(wb, wsStatement, "Cylinder Statement");
+
+      // Sheet 2 — Customer Profile
+      const totalBilled = invoices.reduce((a: number, r: any) => a + Number(r.total ?? 0), 0);
+      const totalPaid   = invoices.filter((r: any) => r.status === "paid").reduce((a: number, r: any) => a + Number(r.total ?? 0), 0);
+      const totalPending = invoices.filter((r: any) => r.status !== "paid").reduce((a: number, r: any) => a + Number(r.total ?? 0), 0);
+      const profileData = [
+        ["CUSTOMER EXPORT — Gas Track"],
+        ["Generated", new Date().toLocaleString("en-IN")],
+        [],
+        ["Customer #",     cust.customer_number],
+        ["Name",           cust.name],
+        ["Phone",          cust.phone ?? "—"],
+        ["Email",          cust.email ?? "—"],
+        ["GSTIN",          cust.gst_number ?? "—"],
+        ["Address",        cust.address ?? "—"],
+        ["Deposit Balance",`₹${Number(cust.deposit_balance ?? 0).toLocaleString()}`],
+        ["Notes",          cust.notes ?? "—"],
+        ["Joined",         cust.created_at ? new Date(cust.created_at).toLocaleDateString("en-IN") : "—"],
+        [],
+        ["FINANCIAL SUMMARY"],
+        ["Total Invoices",  invoices.length],
+        ["Total Billed (₹)", totalBilled],
+        ["Total Paid (₹)",   totalPaid],
+        ["Balance Due (₹)",  totalPending],
+        ["Cylinders with customer", cylinders.length],
+      ];
+      const ws0 = XLSX.utils.aoa_to_sheet(profileData);
+      ws0["!cols"] = [{ wch: 24 }, { wch: 30 }];
+      XLSX.utils.book_append_sheet(wb, ws0, "Profile");
+
+      // Sheet 2 — Invoices
+      if (invoices.length > 0) {
+        const rows = invoices.map((r: any) => ({
+          "Invoice #":          r.invoice_number,
+          "Date":               r.billing_date,
+          "Return Date":        r.return_date ?? "",
+          "GSTIN":              r.gst_number ?? "",
+          "Taxable (₹)":        Number(r.taxable_amount ?? 0),
+          "Discount (₹)":       Number(r.discount ?? 0),
+          "CGST (₹)":           Number(r.cgst_amount ?? 0),
+          "SGST (₹)":           Number(r.sgst_amount ?? 0),
+          "Total (₹)":          Number(r.total ?? 0),
+          "Amount Paid (₹)":    Number(r.amount_paid ?? 0),
+          "Balance (₹)":        Number(r.balance_amount ?? 0),
+          "Payment Status":     r.payment_status ?? r.status,
+          "Payment Method":     r.payment_method ?? "",
+          "Issued Cylinders":   (r.issued_cylinder_numbers ?? []).map((n: number) => `#${n}`).join(", "),
+          "Returned Cylinders": (r.returned_cylinder_numbers ?? []).map((n: number) => `#${n}`).join(", "),
+          "Notes":              r.notes ?? "",
+        }));
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws["!cols"] = Array(rows[0] ? Object.keys(rows[0]).length : 16).fill({ wch: 16 });
+        XLSX.utils.book_append_sheet(wb, ws, "Invoices");
+      }
+
+      // Sheet 3 — Transactions
+      if (transactions.length > 0) {
+        const rows = transactions.map((r: any) => ({
+          "Date":   r.occurred_at ? new Date(r.occurred_at).toLocaleDateString("en-IN") : "",
+          "Type":   r.txn_type,
+          "Cylinder ID": r.cylinder_id,
+          "Amount (₹)": Number(r.amount ?? 0),
+          "Notes": r.notes ?? "",
+        }));
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws["!cols"] = [{ wch: 14 }, { wch: 14 }, { wch: 36 }, { wch: 14 }, { wch: 24 }];
+        XLSX.utils.book_append_sheet(wb, ws, "Transactions");
+      }
+
+      // Sheet 4 — Deposits
+      if (deposits.length > 0) {
+        const rows = deposits.map((r: any) => ({
+          "Date":   r.occurred_at ? new Date(r.occurred_at).toLocaleDateString("en-IN") : "",
+          "Type":   r.type,
+          "Amount (₹)": Number(r.amount ?? 0),
+          "Notes": r.notes ?? "",
+        }));
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws["!cols"] = [{ wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 24 }];
+        XLSX.utils.book_append_sheet(wb, ws, "Deposits");
+      }
+
+      // Sheet 5 — Cylinders with customer
+      if (cylinders.length > 0) {
+        const rows = cylinders.map((r: any) => ({
+          "Cylinder #":  r.cylinder_number ?? "",
+          "Serial":      r.serial_number,
+          "Type":        r.cylinder_types ? `${r.cylinder_types.code} — ${r.cylinder_types.name}` : "",
+          "Status":      r.status,
+          "Issued At":   r.issued_at ? new Date(r.issued_at).toLocaleDateString("en-IN") : "",
+        }));
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws["!cols"] = [{ wch: 12 }, { wch: 18 }, { wch: 24 }, { wch: 14 }, { wch: 14 }];
+        XLSX.utils.book_append_sheet(wb, ws, "Cylinders");
+      }
+
+      const safeName = cust.name.replace(/[^a-z0-9]/gi, "_").toLowerCase();
+      XLSX.writeFile(wb, `customer-${cust.customer_number}-${safeName}.xlsx`);
+      setCustDone(true);
+      toast.success(`Exported ${cust.name}'s data successfully!`);
+    } catch (err: any) {
+      toast.error("Export failed: " + err.message);
+    } finally {
+      setCustLoading(false);
+    }
+  };
+  // ────────────────────────────────────────────────────────────────
+
   return (
     <div className="space-y-6 max-w-3xl mx-auto">
       {/* Header */}
@@ -412,6 +825,112 @@ export default function ExportData() {
           ✓ File downloaded to your computer. Open it in Excel, Google Sheets, or any spreadsheet app.
         </div>
       )}
+
+      {/* ── Single Customer Export ───────────────────────────────── */}
+      <div className="border-t border-border/40 pt-6 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-xl bg-secondary/60 border border-border/60 flex items-center justify-center shrink-0">
+            <UserCheck className="h-5 w-5 text-muted-foreground" />
+          </div>
+          <div>
+            <div className="font-bold text-sm">Export Single Customer</div>
+            <div className="text-xs text-muted-foreground">Download one customer's profile, invoices, transactions &amp; cylinders</div>
+          </div>
+        </div>
+
+        <Card className="bg-card border-border/60 p-5 space-y-4">
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Select Customer to Export</div>
+
+          <Popover open={customerOpen} onOpenChange={setCustomerOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                role="combobox"
+                aria-expanded={customerOpen}
+                className="w-full justify-between font-normal h-11 border-border/60 text-left"
+              >
+                {selectedCustomerId
+                  ? (() => {
+                      const sc = customers.find((c) => c.id === selectedCustomerId);
+                      return sc ? `${sc.customer_number} — ${sc.name}` : "Search customer...";
+                    })()
+                  : "Search customer by name, number, phone or GSTIN..."}
+                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-[450px] p-0" align="start">
+              <Command>
+                <CommandInput placeholder="Type to search customer (name, #, phone, GST)..." />
+                <CommandList>
+                  <CommandEmpty>No customer found.</CommandEmpty>
+                  <CommandGroup>
+                    {customers.map((c) => (
+                      <CommandItem
+                        key={c.id}
+                        value={`${c.customer_number} ${c.name} ${c.phone || ""} ${c.gst_number || ""}`}
+                        onSelect={() => {
+                          setSelectedCustomerId(c.id);
+                          setCustDone(false);
+                          setCustomerOpen(false);
+                        }}
+                      >
+                        <Check className={cn("mr-2 h-4 w-4", selectedCustomerId === c.id ? "opacity-100" : "opacity-0")} />
+                        <div className="flex flex-col text-xs">
+                          <div>
+                            <span className="font-mono text-primary font-bold mr-1">#{c.customer_number}</span>
+                            <span className="font-semibold">{c.name}</span>
+                          </div>
+                          {c.phone && <div className="text-muted-foreground text-[11px]">📞 {c.phone}</div>}
+                        </div>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
+
+          {/* Preview of selected customer */}
+          {selectedCustomerId && (() => {
+            const c = customers.find((x) => x.id === selectedCustomerId);
+            if (!c) return null;
+            return (
+              <div className="rounded-lg bg-secondary/40 border border-border/50 px-4 py-3 space-y-1 text-xs">
+                <div className="font-bold text-sm">{c.name} <span className="text-muted-foreground font-normal">#{c.customer_number}</span></div>
+                {c.phone    && <div className="text-muted-foreground">📞 {c.phone}</div>}
+                {c.address  && <div className="text-muted-foreground">📍 {c.address}</div>}
+                {c.gst_number && <div className="text-muted-foreground">🏷 GSTIN: {c.gst_number}</div>}
+                <div className="text-muted-foreground">💰 Deposit Balance: ₹{Number(c.deposit_balance ?? 0).toLocaleString()}</div>
+                <div className="pt-1 text-[10px] uppercase tracking-widest text-muted-foreground/60">
+                  Sheets: Profile · Invoices · Transactions · Deposits · Cylinders
+                </div>
+              </div>
+            );
+          })()}
+
+          <Button
+            onClick={exportSingleCustomer}
+            disabled={custLoading || !selectedCustomerId}
+            variant="outline"
+            className="w-full h-11 font-bold gap-2"
+          >
+            {custLoading ? (
+              <><Loader2 className="h-4 w-4 animate-spin" /> Exporting…</>
+            ) : custDone ? (
+              <><CheckCircle2 className="h-4 w-4" /> Exported — Download Again</>
+            ) : (
+              <><Download className="h-4 w-4" /> Export Customer Excel</>
+            )}
+          </Button>
+
+          {custDone && (
+            <div className="rounded-lg border border-success/30 bg-success/10 px-4 py-2.5 text-center text-xs text-success font-semibold">
+              ✓ Customer file downloaded successfully!
+            </div>
+          )}
+        </Card>
+      </div>
+      {/* ─────────────────────────────────────────────────────────── */}
     </div>
   );
 }

@@ -41,7 +41,9 @@ type LineItem = {
   description: string;
   hsn_code: string;
   quantity: number;
-  rate: number;
+  rate: string;
+  cgst_rate: string;
+  sgst_rate: string;
   issued_numbers: string;
   returned_numbers: string;
 };
@@ -73,8 +75,6 @@ export default function Invoices() {
     billing_date: new Date().toISOString().slice(0, 10),
     return_date: "",
     discount: "0",
-    cgst_rate: "9",
-    sgst_rate: "9",
     notes: "",
     payment_status: "unpaid" as PaymentStatus,
     amount_paid: "0",
@@ -111,15 +111,39 @@ export default function Invoices() {
     }
   }, [form.payment_status]);
 
+  // Group lines by GST slab and compute per-slab figures
   const totals = useMemo(() => {
     const subtotal = lines.reduce((a, l) => a + Number(l.quantity || 0) * Number(l.rate || 0), 0);
     const discount = Number(form.discount) || 0;
-    const taxable = Math.max(0, subtotal - discount);
-    const cgst = (taxable * (Number(form.cgst_rate) || 0)) / 100;
-    const sgst = (taxable * (Number(form.sgst_rate) || 0)) / 100;
-    const gross = taxable + cgst + sgst;
-    const total = Math.round(gross);
-    const roundoff = +(total - gross).toFixed(2);
+    const grossAfterDiscount = Math.max(0, subtotal - discount);
+
+    // Build per-slab breakdown
+    type SlabEntry = { cgstRate: number; sgstRate: number; gross: number; taxable: number; cgst: number; sgst: number };
+    const slabMap: Record<string, SlabEntry> = {};
+    const discountRatio = subtotal > 0 ? grossAfterDiscount / subtotal : 1;
+
+    for (const l of lines) {
+      const lineGross = Number(l.quantity || 0) * Number(l.rate || 0) * discountRatio;
+      const cr = Number(l.cgst_rate) || 0;
+      const sr = Number(l.sgst_rate) || 0;
+      const key = `${cr}_${sr}`;
+      const divisor = 1 + (cr + sr) / 100;
+      const taxable = lineGross / divisor;
+      const cgst = taxable * cr / 100;
+      const sgst = taxable * sr / 100;
+      if (!slabMap[key]) slabMap[key] = { cgstRate: cr, sgstRate: sr, gross: 0, taxable: 0, cgst: 0, sgst: 0 };
+      slabMap[key].gross   += lineGross;
+      slabMap[key].taxable += taxable;
+      slabMap[key].cgst    += cgst;
+      slabMap[key].sgst    += sgst;
+    }
+
+    const slabs = Object.values(slabMap);
+    const taxable = slabs.reduce((a, s) => a + s.taxable, 0);
+    const cgst    = slabs.reduce((a, s) => a + s.cgst, 0);
+    const sgst    = slabs.reduce((a, s) => a + s.sgst, 0);
+    const total   = Math.round(grossAfterDiscount);
+    const roundoff = +(total - grossAfterDiscount).toFixed(2);
 
     const paid = form.payment_status === "paid"
       ? total
@@ -128,14 +152,14 @@ export default function Invoices() {
       : 0;
     const balance = Math.max(0, total - paid);
 
-    return { subtotal, discount, taxable, cgst, sgst, total, roundoff, paid, balance };
+    return { subtotal, discount: discount, taxable, cgst, sgst, total, roundoff, paid, balance, slabs };
   }, [lines, form]);
 
   const resetForm = () => {
     setForm({
       customer_id: "", gst_number: "",
       billing_date: new Date().toISOString().slice(0, 10),
-      return_date: "", discount: "0", cgst_rate: "9", sgst_rate: "9", notes: "",
+      return_date: "", discount: "0", notes: "",
       payment_status: "unpaid", amount_paid: "0",
       payment_date: new Date().toISOString().slice(0, 10),
       payment_method: "Cash",
@@ -143,7 +167,18 @@ export default function Invoices() {
     setLines([]);
   };
 
-  const addLine = () => setLines([...lines, { type_id: "", description: "", hsn_code: "", quantity: 1, rate: 0, issued_numbers: "", returned_numbers: "" }]);
+  const addLine = () => setLines([...lines, { type_id: "", description: "", hsn_code: "", quantity: 1, rate: "", cgst_rate: "9", sgst_rate: "9", issued_numbers: "", returned_numbers: "" }]);
+
+  // GST rate map: type code (uppercase) → [cgst%, sgst%]
+  const GST_RATE_MAP: Record<string, [string, string]> = {
+    MO2:   ["2.5", "2.5"],
+    N2O:   ["2.5", "2.5"],
+    CO2:   ["9",   "9"],
+    O2:    ["9",   "9"],
+    ARGON: ["9",   "9"],
+    N2:    ["9",   "9"],
+    DA:    ["9",   "9"],
+  };
 
   const updateLine = (idx: number, patch: Partial<LineItem>) => {
     setLines((curr) => curr.map((l, i) => {
@@ -153,8 +188,12 @@ export default function Invoices() {
         const t = types.find((x) => x.id === patch.type_id);
         if (t) {
           if (!merged.hsn_code) merged.hsn_code = t.hsn_code ?? "";
-          if (!merged.rate) merged.rate = Number(t.price) || 0;
+          if (!merged.rate) merged.rate = String(Number(t.price) || 0);
           if (!merged.description) merged.description = `${t.name} (${t.code})`;
+          // Auto-set per-line GST rates from the type code
+          const code = (t.code ?? "").trim().toUpperCase();
+          const rates = GST_RATE_MAP[code];
+          if (rates) { merged.cgst_rate = rates[0]; merged.sgst_rate = rates[1]; }
         }
       }
       return merged;
@@ -203,14 +242,37 @@ export default function Invoices() {
       company,
     };
 
-    const { data: inv, error } = await (supabase.from("invoices") as any).insert(payload).select().single();
+    let { data: inv, error } = await (supabase.from("invoices") as any).insert(payload).select().single();
+
+    // If schema cache doesn't have the new payment columns yet, strip them and retry
+    if (error && (error.message.includes("schema cache") || error.message.includes("Could not find"))) {
+      const missingCol = error.message.match(/'([^']+)' column/)?.[1] ?? "unknown column";
+      const fallbackPayload = { ...payload };
+      // Remove all payment-tracking columns that may not exist yet
+      delete fallbackPayload.payment_status;
+      delete fallbackPayload.amount_paid;
+      delete fallbackPayload.balance_amount;
+      delete fallbackPayload.payment_date;
+      delete fallbackPayload.payment_method;
+      const retry = await (supabase.from("invoices") as any).insert(fallbackPayload).select().single();
+      inv = retry.data;
+      error = retry.error;
+      if (!error) {
+        toast.warning(`Invoice saved, but column '${missingCol}' is missing — run the SQL migration to enable full payment tracking.`);
+      }
+    }
+
     if (error || !inv) return toast.error(error?.message ?? "Failed to save invoice");
 
     const itemRows = lines.map((l) => {
-      const taxable = Number(l.quantity) * Number(l.rate);
-      const cg = (taxable * (Number(form.cgst_rate) || 0)) / 100;
-      const sg = (taxable * (Number(form.sgst_rate) || 0)) / 100;
-      return { invoice_id: inv.id, cylinder_id: null, type_id: l.type_id || null, description: l.description, hsn_code: l.hsn_code, quantity: l.quantity, rate: l.rate, taxable, cgst_amount: cg, sgst_amount: sg, total: taxable + cg + sg };
+      const gross = Number(l.quantity) * Number(l.rate); // rate is GST-inclusive
+      const cr = Number(l.cgst_rate) || 0;
+      const sr = Number(l.sgst_rate) || 0;
+      const gstDivisor = 1 + (cr + sr) / 100;
+      const taxable = gross / gstDivisor;
+      const cg = taxable * cr / 100;
+      const sg = taxable * sr / 100;
+      return { invoice_id: inv.id, cylinder_id: null, type_id: l.type_id || null, description: l.description, hsn_code: l.hsn_code, quantity: l.quantity, rate: l.rate, cgst_rate: cr, sgst_rate: sr, taxable, cgst_amount: cg, sgst_amount: sg, total: gross };
     });
     if (itemRows.length) await supabase.from("invoice_items").insert(itemRows);
 
@@ -355,11 +417,12 @@ export default function Invoices() {
                       📍 {selectedCustomer.address || "No address"} · 📞 {selectedCustomer.phone || "No phone"}
                     </div>
                   )}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-2 gap-3">
                     <div><Label className="text-xs text-muted-foreground">Billing Date</Label><Input type="date" className="mt-1" value={form.billing_date} onChange={(e) => setForm({ ...form, billing_date: e.target.value })} /></div>
                     <div><Label className="text-xs text-muted-foreground">Return Date</Label><Input type="date" className="mt-1" value={form.return_date} onChange={(e) => setForm({ ...form, return_date: e.target.value })} /></div>
-                    <div><Label className="text-xs text-muted-foreground">CGST %</Label><Input type="number" className="mt-1" value={form.cgst_rate} onChange={(e) => setForm({ ...form, cgst_rate: e.target.value })} /></div>
-                    <div><Label className="text-xs text-muted-foreground">SGST %</Label><Input type="number" className="mt-1" value={form.sgst_rate} onChange={(e) => setForm({ ...form, sgst_rate: e.target.value })} /></div>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground bg-secondary/40 rounded-lg px-3 py-2">
+                    ℹ️ GST rates are set automatically per gas type — MO2 &amp; N2O: 5% · CO2, O2, Argon, N2, DA: 18%
                   </div>
                 </div>
 
@@ -388,7 +451,7 @@ export default function Invoices() {
                         </Button>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-6 gap-2">
                         <div className="sm:col-span-1">
                           <Label className="text-[10px] text-muted-foreground">Cylinder Type *</Label>
                           <Select value={l.type_id} onValueChange={(v) => updateLine(i, { type_id: v })}>
@@ -418,7 +481,17 @@ export default function Invoices() {
                           </div>
                           <div>
                             <Label className="text-[10px] text-muted-foreground">Rate ₹</Label>
-                            <Input type="number" className="mt-1 h-9 font-mono" value={l.rate} onChange={(e) => updateLine(i, { rate: Number(e.target.value) })} />
+                            <Input type="number" className="mt-1 h-9 font-mono" value={l.rate} onChange={(e) => updateLine(i, { rate: e.target.value })} />
+                          </div>
+                        </div>
+                        {/* Per-line GST badge */}
+                        <div className="flex flex-col justify-end pb-1">
+                          <Label className="text-[10px] text-muted-foreground mb-1">GST Slab</Label>
+                          <div className="h-9 flex items-center px-2 rounded-md border border-border/60 bg-secondary/40 font-mono font-bold text-xs gap-1">
+                            <span>{l.cgst_rate}%</span>
+                            <span className="text-muted-foreground">+</span>
+                            <span>{l.sgst_rate}%</span>
+                            <span className="text-muted-foreground text-[10px] ml-0.5">= {(Number(l.cgst_rate) + Number(l.sgst_rate))}%</span>
                           </div>
                         </div>
                       </div>
@@ -480,11 +553,29 @@ export default function Invoices() {
                     <div><Label className="text-xs text-muted-foreground">Discount (₹)</Label><Input type="number" className="mt-1" value={form.discount} onChange={(e) => setForm({ ...form, discount: e.target.value })} /></div>
                   </div>
                   <div className="rounded-lg bg-secondary/40 p-3 space-y-1.5 font-mono text-sm">
-                    <AmtRow k="Subtotal" v={totals.subtotal} />
+                    <AmtRow k="Gross (GST Incl.)" v={totals.subtotal} />
                     {totals.discount > 0 && <AmtRow k="Discount" v={-totals.discount} />}
-                    <AmtRow k="Taxable" v={totals.taxable} bold />
-                    <AmtRow k={`CGST @ ${form.cgst_rate}%`} v={totals.cgst} />
-                    <AmtRow k={`SGST @ ${form.sgst_rate}%`} v={totals.sgst} />
+
+                    {/* Per-slab GST breakdown */}
+                    {totals.slabs.length > 0 && (
+                      <div className="border-t border-border/40 pt-1.5 mt-1 space-y-1">
+                        <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">GST Breakup (included in above)</div>
+                        {totals.slabs.map((s, idx) => (
+                          <div key={idx} className="bg-secondary/60 rounded-md px-2 py-1.5 space-y-0.5">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+                              {s.cgstRate + s.sgstRate}% Slab &nbsp;·&nbsp; Taxable: ₹{s.taxable.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                            <AmtRow k={`CGST @ ${s.cgstRate}%`} v={s.cgst} />
+                            <AmtRow k={`SGST @ ${s.sgstRate}%`} v={s.sgst} />
+                          </div>
+                        ))}
+                        <div className="flex justify-between text-xs pt-0.5">
+                          <span className="text-muted-foreground">Total Tax</span>
+                          <span className="font-semibold">₹{(totals.cgst + totals.sgst).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        </div>
+                      </div>
+                    )}
+
                     {totals.roundoff !== 0 && <AmtRow k="Round off" v={totals.roundoff} />}
                     <div className="border-t border-border/60 pt-2 mt-1">
                       <AmtRow k="TOTAL" v={totals.total} bold big />

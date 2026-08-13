@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
+import { useCompany } from "@/hooks/useCompany";
+
 type Invoice = {
   id: string;
   invoice_number: string;
@@ -27,9 +29,11 @@ type Invoice = {
     address: string;
     gst_number: string;
   };
+  invoice_items?: any[];
 };
 
 export default function CustomerHistory() {
+  const { company } = useCompany();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -52,7 +56,8 @@ export default function CustomerHistory() {
         id, invoice_number, billing_date, return_date,
         issued_cylinder_numbers, returned_cylinder_numbers,
         total, amount, status,
-        customers(name, customer_number, phone, address, gst_number)
+        customers(name, customer_number, phone, address, gst_number),
+        invoice_items(*, cylinder_types(code, name))
       `)
       .order("billing_date", { ascending: false });
     if (!error) setInvoices((data ?? []) as any);
@@ -126,8 +131,129 @@ export default function CustomerHistory() {
     return allIssued.filter((n) => !allReturned.includes(n));
   };
 
+  // Helper to format date into DD/MM/YYYY
+  const formatDateStr = (dateStr: string | null | undefined): string => {
+    if (!dateStr) return "";
+    const clean = dateStr.slice(0, 10);
+    const parts = clean.split("-");
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return dateStr;
+  };
+
   // Export to Excel
   const exportExcel = () => {
+    const wb = XLSX.utils.book_new();
+
+    // ── Sheet 1: Cylinder Statement (Exact Requested Format) ────────
+    const title = company ? company.toUpperCase() : "GREEN AIR SYSTEM";
+    const statementAoa: any[][] = [
+      [title, "", "", "", ""],
+      ["issue DATE", "BILL NO", "FULL", "EMPTY", "return DATE"],
+    ];
+
+    // Collect all invoices sorted by billing_date ascending
+    const allFilteredInvoices = filtered.slice().sort((a, b) => (a.billing_date ?? "").localeCompare(b.billing_date ?? ""));
+
+    allFilteredInvoices.forEach((inv: any) => {
+      const issueDateStr = formatDateStr(inv.billing_date);
+      const billNo = inv.invoice_number ?? "";
+      const returnDateStr = formatDateStr(inv.return_date);
+
+      const items = inv.invoice_items ?? [];
+      const issuedNums: (number | string)[] = inv.issued_cylinder_numbers ?? [];
+      const returnedNums: (number | string)[] = inv.returned_cylinder_numbers ?? [];
+
+      const cylinderRows: { full: string; empty: string; returnDate: string }[] = [];
+      let cylIdx = 0;
+
+      if (items.length > 0) {
+        items.forEach((item: any) => {
+          const code = (item.cylinder_types?.code || item.description?.split(" ")[0] || "CYL").trim();
+          const qty = Math.max(1, Number(item.quantity) || 1);
+
+          for (let q = 0; q < qty; q++) {
+            const issuedNum = issuedNums[cylIdx];
+            const returnedNum = returnedNums[cylIdx];
+            cylIdx++;
+
+            let fullVal = "";
+            let emptyVal = "";
+
+            if (issuedNum !== undefined && issuedNum !== null && String(issuedNum).trim() !== "") {
+              const numStr = String(issuedNum).trim();
+              if (code.toUpperCase() === "DA" && !numStr.toUpperCase().startsWith("DA")) {
+                fullVal = `DA-${numStr}`;
+              } else if (numStr.toUpperCase().startsWith("DA") || numStr.includes("-")) {
+                fullVal = numStr;
+              } else {
+                fullVal = `${numStr}-${code}`;
+              }
+            } else {
+              fullVal = `${code}`;
+            }
+
+            if (returnedNum !== undefined && returnedNum !== null && String(returnedNum).trim() !== "") {
+              const retStr = String(returnedNum).trim();
+              if (code.toUpperCase() === "DA" && !retStr.toUpperCase().startsWith("DA")) {
+                emptyVal = `DA-${retStr}`;
+              } else {
+                emptyVal = retStr;
+              }
+            }
+
+            cylinderRows.push({
+              full: fullVal,
+              empty: emptyVal,
+              returnDate: emptyVal ? (returnDateStr || issueDateStr) : "",
+            });
+          }
+        });
+      } else if (issuedNums.length > 0) {
+        issuedNums.forEach((issuedNum, idx) => {
+          const returnedNum = returnedNums[idx];
+          let emptyVal = "";
+          if (returnedNum !== undefined && returnedNum !== null && String(returnedNum).trim() !== "") {
+            emptyVal = String(returnedNum).trim();
+          }
+          cylinderRows.push({
+            full: String(issuedNum),
+            empty: emptyVal,
+            returnDate: emptyVal ? (returnDateStr || issueDateStr) : "",
+          });
+        });
+      } else {
+        cylinderRows.push({
+          full: "1 Cylinder",
+          empty: "",
+          returnDate: "",
+        });
+      }
+
+      cylinderRows.forEach((row, idx) => {
+        statementAoa.push([
+          idx === 0 ? issueDateStr : "",
+          idx === 0 ? billNo : "",
+          row.full,
+          row.empty,
+          row.returnDate,
+        ]);
+      });
+    });
+
+    const wsStatement = XLSX.utils.aoa_to_sheet(statementAoa);
+    wsStatement["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+    wsStatement["!cols"] = [
+      { wch: 16 }, // issue DATE
+      { wch: 14 }, // BILL NO
+      { wch: 18 }, // FULL
+      { wch: 18 }, // EMPTY
+      { wch: 16 }, // return DATE
+    ];
+    XLSX.utils.book_append_sheet(wb, wsStatement, "Cylinder Statement");
+
+    // ── Sheet 2: Detailed Customer History ────────────────────────────
     const rows: any[] = [];
     for (const { customer, invoices: invs } of byCustomer) {
       const outstanding = getOutstanding(invs);
@@ -153,28 +279,17 @@ export default function CustomerHistory() {
       }
     }
 
-    if (rows.length === 0) {
-      rows.push({
-        "Customer Name": "No data found",
-        "Customer #": "", "Phone": "", "Invoice #": "", "Date": "",
-        "Return Date": "", "Issued Cylinders": "", "Issued Count": 0,
-        "Returned Cylinders": "", "Returned Count": 0,
-        "Outstanding Cylinders": "", "Outstanding Count": 0,
-        "Amount (₹)": 0, "Status": "",
-      });
+    if (rows.length > 0) {
+      const ws = XLSX.utils.json_to_sheet(rows);
+      ws["!cols"] = [
+        { wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 16 }, { wch: 12 },
+        { wch: 12 }, { wch: 30 }, { wch: 12 }, { wch: 30 }, { wch: 14 },
+        { wch: 30 }, { wch: 16 }, { wch: 14 }, { wch: 10 },
+      ];
+      XLSX.utils.book_append_sheet(wb, ws, "Customer Details");
     }
 
-    const ws = XLSX.utils.json_to_sheet(rows);
-    // Column widths
-    ws["!cols"] = [
-      { wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 16 }, { wch: 12 },
-      { wch: 12 }, { wch: 30 }, { wch: 12 }, { wch: 30 }, { wch: 14 },
-      { wch: 30 }, { wch: 16 }, { wch: 14 }, { wch: 10 },
-    ];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Customer History");
-
-    // Also add a summary sheet
+    // ── Sheet 3: Summary ─────────────────────────────────────────────
     const summaryRows = byCustomer.map(({ customer, invoices: invs }) => {
       const outstanding = getOutstanding(invs);
       const totalAmount = invs.reduce((a, b) => a + Number(b.total ?? 0), 0);
@@ -194,7 +309,7 @@ export default function CustomerHistory() {
     ws2["!cols"] = [{ wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 22 }, { wch: 22 }, { wch: 30 }, { wch: 18 }, { wch: 16 }];
     XLSX.utils.book_append_sheet(wb, ws2, "Summary");
 
-    XLSX.writeFile(wb, `customer-history-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `customer-cylinder-statement-${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   return (

@@ -16,7 +16,7 @@ type Line = {
   serial_number: string;
   type_id: string;
   hsn_code: string;
-  rate: number;
+  rate: string;
   fill_status: "filled" | "empty";
 };
 
@@ -176,7 +176,7 @@ export default function Purchases() {
 
   const addLine = () => setLines([...lines, {
     cylinder_number: "", serial_number: "", type_id: types[0]?.id ?? "", hsn_code: "",
-    rate: 0, fill_status: "filled",
+    rate: "", fill_status: "filled",
   }]);
 
   const updateLine = (idx: number, patch: Partial<Line>) => {
@@ -199,7 +199,7 @@ export default function Purchases() {
         const t = types.find((x) => x.id === patch.type_id);
         if (t) {
           if (!merged.hsn_code) merged.hsn_code = t.hsn_code ?? "";
-          if (!merged.rate) merged.rate = Number(t.price) || 0;
+          if (!merged.rate) merged.rate = String(Number(t.price) || 0);
         }
       }
       return merged;
@@ -455,16 +455,16 @@ export default function Purchases() {
           <div className="text-[10px] text-muted-foreground mt-1">{items.length} purchase bills</div>
         </Card>
         <Card className="p-5 bg-card border-border/60">
-          <div className="text-xs uppercase tracking-widest text-muted-foreground flex items-center gap-1.5 text-emerald-400">
+          <div className="text-xs uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
             <CheckCircle2 className="h-4 w-4" /> Amount Paid
           </div>
-          <div className="text-2xl font-bold mt-2 font-mono text-emerald-400">₹{totalPaid.toLocaleString()}</div>
+          <div className="text-2xl font-bold mt-2 font-mono">₹{totalPaid.toLocaleString()}</div>
         </Card>
         <Card className="p-5 bg-card border-border/60">
-          <div className="text-xs uppercase tracking-widest text-muted-foreground flex items-center gap-1.5 text-amber-400">
+          <div className="text-xs uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
             <Clock className="h-4 w-4" /> Balance Due
           </div>
-          <div className="text-2xl font-bold mt-2 font-mono text-amber-400">₹{totalBalance.toLocaleString()}</div>
+          <div className="text-2xl font-bold mt-2 font-mono">₹{totalBalance.toLocaleString()}</div>
         </Card>
         <Card className="p-5 bg-card border-border/60">
           <div className="text-xs uppercase tracking-widest text-muted-foreground">Purchased Cylinders</div>
@@ -550,7 +550,7 @@ export default function Purchases() {
                             <SelectContent>{types.map((t) => <SelectItem key={t.id} value={t.id}>{t.code} — {t.name}</SelectItem>)}</SelectContent>
                           </Select>
                         </div>
-                        <div className="sm:col-span-1"><Label className="text-[10px]">Rate ₹</Label><Input type="number" value={l.rate} onChange={(e) => updateLine(i, { rate: Number(e.target.value) })} /></div>
+                        <div className="sm:col-span-1"><Label className="text-[10px]">Rate ₹</Label><Input type="number" value={l.rate} onChange={(e) => updateLine(i, { rate: e.target.value })} /></div>
                         <div className="sm:col-span-2">
                           <Label className="text-[10px]">Fill Status</Label>
                           <div className="flex rounded-md border border-border/60 overflow-hidden">
@@ -559,8 +559,8 @@ export default function Purchases() {
                               onClick={() => updateLine(i, { fill_status: "filled" })}
                               className={`flex-1 flex items-center justify-center gap-1 py-2 text-[10px] font-extrabold transition-all ${
                                 l.fill_status === "filled"
-                                  ? "bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-500"
-                                  : "bg-secondary/40 text-muted-foreground hover:bg-emerald-950/40 hover:text-emerald-400"
+                                  ? "bg-foreground text-background shadow-sm ring-1 ring-foreground/60"
+                                  : "bg-secondary/40 text-muted-foreground hover:bg-secondary/70"
                               }`}
                             >
                               <Flame className="h-3 w-3" /> Filled
@@ -570,8 +570,8 @@ export default function Purchases() {
                               onClick={() => updateLine(i, { fill_status: "empty" })}
                               className={`flex-1 flex items-center justify-center gap-1 py-2 text-[10px] font-extrabold transition-all ${
                                 l.fill_status === "empty"
-                                  ? "bg-amber-600 text-white shadow-sm ring-1 ring-amber-500"
-                                  : "bg-secondary/40 text-muted-foreground hover:bg-amber-950/40 hover:text-amber-400"
+                                  ? "bg-foreground text-background shadow-sm ring-1 ring-foreground/60"
+                                  : "bg-secondary/40 text-muted-foreground hover:bg-secondary/70"
                               }`}
                             >
                               <Circle className="h-3 w-3" /> Empty
@@ -612,7 +612,7 @@ export default function Purchases() {
 
                     <div>
                       <Label className="text-xs flex items-center gap-1">
-                        <Calendar className="h-3 w-3 text-amber-400" /> 1st Half Paid Date
+                        <Calendar className="h-3 w-3" /> 1st Half Paid Date
                       </Label>
                       <Input
                         type="date"
@@ -630,7 +630,7 @@ export default function Purchases() {
                         disabled={form.payment_status === "paid" || form.payment_status === "unpaid"}
                         value={form.payment_status === "paid" ? totals.total : form.payment_status === "unpaid" ? 0 : form.amount_paid}
                         onChange={(e) => setForm({ ...form, amount_paid: e.target.value })}
-                        className="mt-1 font-mono font-bold text-amber-400"
+                        className="mt-1 font-mono font-bold"
                       />
                     </div>
 
@@ -652,10 +652,10 @@ export default function Purchases() {
                   </div>
 
                   {form.payment_status === "partial" && (
-                    <div className="p-3 rounded-md bg-amber-950/20 border border-amber-500/30 flex items-center justify-between text-xs">
+                    <div className="p-3 rounded-md bg-secondary/40 border border-border/60 flex items-center justify-between text-xs">
                       <div className="flex items-center gap-2">
-                        <Clock className="h-4 w-4 text-amber-400" />
-                        <span className="font-semibold text-amber-300">2nd Half Balance Due: <b>₹{totals.balance.toLocaleString()}</b></span>
+                        <Clock className="h-4 w-4" />
+                        <span className="font-semibold">2nd Half Balance Due: <b>₹{totals.balance.toLocaleString()}</b></span>
                       </div>
                       <span className="text-[11px] text-muted-foreground">Record 2nd Half payment anytime with date selection in the table!</span>
                     </div>
@@ -673,11 +673,11 @@ export default function Purchases() {
                   <div className="border-t border-border/60 mt-2 pt-2">
                     <Row k="TOTAL BILL" v={totals.total} bold big />
                   </div>
-                  <div className="flex justify-between text-xs pt-1 text-amber-400 font-semibold">
+                  <div className="flex justify-between text-xs pt-1 font-semibold">
                     <span>1st Half Paid</span>
                     <span>₹{totals.paid.toLocaleString()}</span>
                   </div>
-                  <div className="flex justify-between text-xs text-purple-300 font-semibold">
+                  <div className="flex justify-between text-xs font-semibold">
                     <span>2nd Half Remaining</span>
                     <span>₹{totals.balance.toLocaleString()}</span>
                   </div>
@@ -739,15 +739,15 @@ export default function Purchases() {
                     </td>
                     <td className="px-4 py-3 text-center">
                       {history.status === "paid" ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-foreground/10 text-foreground border border-foreground/20">
                           <CheckCircle2 className="h-3 w-3" /> Fully Paid
                         </span>
                       ) : history.status === "partial" ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-foreground/10 text-foreground border border-foreground/20">
                           <Clock className="h-3 w-3" /> Partial Paid
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-500/15 text-red-400 border border-red-500/30">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-foreground/10 text-foreground border border-foreground/20">
                           <AlertCircle className="h-3 w-3" /> Unpaid
                         </span>
                       )}
@@ -759,18 +759,18 @@ export default function Purchases() {
                         <span className="text-muted-foreground">—</span>
                       ) : (
                         <div className="flex flex-col items-center gap-1">
-                          {/* 1st Payment Date (Amber Badge) */}
+                          {/* 1st Payment Date Badge */}
                           {p1 && (
-                            <span className="inline-flex items-center gap-1 font-bold text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-md">
-                              <Calendar className="h-2.5 w-2.5 text-amber-400" />
+                            <span className="inline-flex items-center gap-1 font-bold text-[10px] bg-foreground/10 text-foreground border border-foreground/20 px-2 py-0.5 rounded-md">
+                              <Calendar className="h-2.5 w-2.5" />
                               1st: {new Date(p1.date).toLocaleDateString()} (₹{p1.amount.toLocaleString()})
                             </span>
                           )}
 
-                          {/* 2nd / Final Payment Date (Vibrant Purple Badge) */}
+                          {/* 2nd / Final Payment Date Badge */}
                           {p2 ? (
-                            <span className="inline-flex items-center gap-1 font-bold text-[10px] bg-purple-500/25 text-purple-200 border border-purple-400/50 px-2 py-0.5 rounded-md shadow-sm">
-                              <CheckCircle2 className="h-2.5 w-2.5 text-purple-300" />
+                            <span className="inline-flex items-center gap-1 font-bold text-[10px] bg-foreground/10 text-foreground border border-foreground/20 px-2 py-0.5 rounded-md">
+                              <CheckCircle2 className="h-2.5 w-2.5" />
                               2nd: {new Date(p2.date).toLocaleDateString()} (₹{p2.amount.toLocaleString()})
                             </span>
                           ) : history.balance > 0 ? (
@@ -779,7 +779,7 @@ export default function Purchases() {
                               size="sm"
                               variant="outline"
                               onClick={() => openPaymentModal(p)}
-                              className="h-6 px-2 text-[10px] font-extrabold border-purple-400/60 bg-purple-950/40 text-purple-200 hover:bg-purple-600 hover:text-white transition-all shadow-sm"
+                              className="h-6 px-2 text-[10px] font-extrabold border-border bg-secondary/60 text-foreground hover:bg-foreground hover:text-background transition-all"
                             >
                               <Plus className="h-2.5 w-2.5 mr-0.5" />
                               Pay 2nd Half (₹{history.balance.toLocaleString()})
@@ -790,10 +790,10 @@ export default function Purchases() {
                     </td>
 
                     <td className="px-4 py-3 text-right font-mono font-semibold">₹{Number(p.total).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-right font-mono text-emerald-400 font-bold">₹{history.paid.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right font-mono font-bold">₹{history.paid.toLocaleString()}</td>
                     <td className="px-4 py-3 text-right font-mono font-bold">
                       {history.balance > 0 ? (
-                        <span className="text-amber-400">₹{history.balance.toLocaleString()}</span>
+                        <span>₹{history.balance.toLocaleString()}</span>
                       ) : (
                         <span className="text-muted-foreground">₹0</span>
                       )}
@@ -805,9 +805,9 @@ export default function Purchases() {
                             size="sm"
                             variant="outline"
                             onClick={() => openPaymentModal(p)}
-                            className="h-8 px-2 text-[11px] font-bold border-purple-400/60 text-purple-300 bg-purple-950/20 hover:bg-purple-600 hover:text-white transition-all"
+                            className="h-8 px-2 text-[11px] font-bold border-border text-foreground bg-secondary/60 hover:bg-foreground hover:text-background transition-all"
                           >
-                            <Calendar className="h-3 w-3 mr-1 text-purple-300" />
+                            <Calendar className="h-3 w-3 mr-1" />
                             2nd Half
                           </Button>
                         )}
@@ -825,7 +825,7 @@ export default function Purchases() {
 
       {/* Record 2nd Half Payment Installment Modal */}
       <Dialog open={!!payModalItem} onOpenChange={(v) => !v && setPayModalItem(null)}>
-        <DialogContent className="max-w-md border-purple-500/40">
+        <DialogContent className="max-w-md border-border/60">
           {payModalItem && (() => {
             const history = getPaymentHistory(payModalItem);
 
@@ -833,7 +833,7 @@ export default function Purchases() {
               <div className="space-y-4">
                 <DialogHeader>
                   <DialogTitle className="flex items-center justify-between">
-                    <span className="text-purple-300 flex items-center gap-1.5">
+                    <span className="flex items-center gap-1.5">
                       <Calendar className="h-4 w-4" /> Record 2nd Half Payment
                     </span>
                     <span className="text-xs font-mono text-primary">{payModalItem.purchase_number}</span>
@@ -842,11 +842,11 @@ export default function Purchases() {
 
                 <div className="p-3.5 rounded-lg bg-secondary/60 space-y-1.5 text-xs font-mono border border-border/60">
                   <div className="flex justify-between"><span>Total Bill Amount:</span><b>₹{Number(payModalItem.total).toLocaleString()}</b></div>
-                  <div className="flex justify-between text-amber-400">
+                  <div className="flex justify-between">
                     <span>1st Half Paid ({history.firstPayDate ? new Date(history.firstPayDate).toLocaleDateString() : "Initial"}):</span>
                     <b>₹{history.paid.toLocaleString()}</b>
                   </div>
-                  <div className="flex justify-between text-purple-300 font-bold border-t border-border/40 pt-1.5 mt-1 text-sm">
+                  <div className="flex justify-between font-bold border-t border-border/40 pt-1.5 mt-1 text-sm">
                     <span>2nd Half Remaining Balance:</span><b>₹{history.balance.toLocaleString()}</b>
                   </div>
                 </div>
@@ -854,22 +854,22 @@ export default function Purchases() {
                 <div className="space-y-3">
                   {/* 2nd Half Payment Date Calendar Picker */}
                   <div>
-                    <Label className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
-                      <Calendar className="h-3.5 w-3.5 text-purple-400" />
+                    <Label className="text-xs font-bold flex items-center gap-1.5">
+                      <Calendar className="h-3.5 w-3.5" />
                       2nd Half Payment Date (Calendar)
                     </Label>
                     <Input
                       type="date"
                       value={payDate}
                       onChange={(e) => setPayDate(e.target.value)}
-                      className="mt-1 border-purple-500/40 focus:border-purple-400 font-mono font-bold"
+                      className="mt-1 font-mono font-bold"
                     />
                   </div>
 
                   {/* 2nd Half Payment Amount */}
                   <div>
                     <Label className="text-xs font-bold flex items-center gap-1.5">
-                      <DollarSign className="h-3.5 w-3.5 text-emerald-400" />
+                      <DollarSign className="h-3.5 w-3.5" />
                       2nd Half Payment Amount (₹)
                     </Label>
                     <Input
@@ -885,7 +885,7 @@ export default function Purchases() {
                   {/* Payment Method */}
                   <div>
                     <Label className="text-xs font-semibold flex items-center gap-1.5">
-                      <CreditCard className="h-3.5 w-3.5 text-primary" />
+                      <CreditCard className="h-3.5 w-3.5" />
                       Payment Method
                     </Label>
                     <Select value={payMethod} onValueChange={setPayMethod}>
@@ -911,7 +911,7 @@ export default function Purchases() {
                   </div>
                 </div>
 
-                <Button onClick={savePaymentInstallment} className="w-full h-11 font-extrabold uppercase tracking-wider bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-md">
+                <Button onClick={savePaymentInstallment} className="w-full h-11 font-extrabold uppercase tracking-wider">
                   Confirm & Save 2nd Half Payment
                 </Button>
               </div>
@@ -933,11 +933,11 @@ export default function Purchases() {
                   <DialogTitle className="flex items-center justify-between">
                     <span>{viewing.purchase_number}</span>
                     {history.status === "paid" ? (
-                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">Fully Paid</span>
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-foreground/10 text-foreground border border-foreground/20">Fully Paid</span>
                     ) : history.status === "partial" ? (
-                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">Partial Paid</span>
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-foreground/10 text-foreground border border-foreground/20">Partial Paid</span>
                     ) : (
-                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-red-500/15 text-red-400 border border-red-500/30">Unpaid</span>
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-foreground/10 text-foreground border border-foreground/20">Unpaid</span>
                     )}
                   </DialogTitle>
                 </DialogHeader>
@@ -953,14 +953,14 @@ export default function Purchases() {
                 <div className="p-4 rounded-lg bg-card border border-border/80 space-y-3">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                      <Calendar className="h-4 w-4 text-primary" />
+                      <Calendar className="h-4 w-4" />
                       Payment History & Dates ({history.payments.length} entries)
                     </Label>
                     {history.balance > 0 && (
                       <Button
                         size="sm"
                         onClick={() => openPaymentModal(viewing)}
-                        className="h-7 px-3 text-xs font-extrabold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white"
+                        className="h-7 px-3 text-xs font-extrabold"
                       >
                         + Pay 2nd Half (₹{history.balance.toLocaleString()})
                       </Button>
@@ -968,7 +968,7 @@ export default function Purchases() {
                   </div>
 
                   {history.payments.length === 0 ? (
-                    <p className="text-xs text-muted-foreground text-center py-3">No payments recorded yet.</p>
+                    <p className="text-xs text-muted-foreground text-center">No payments recorded yet.</p>
                   ) : (
                     <div className="space-y-2">
                       {history.payments.map((p, idx) => {
@@ -976,18 +976,10 @@ export default function Purchases() {
                         return (
                           <div
                             key={p.id || idx}
-                            className={`flex items-center justify-between p-3 rounded-lg border text-xs transition-all ${
-                              isSecondHalf
-                                ? "bg-purple-950/30 border-purple-500/40 text-purple-200"
-                                : "bg-amber-950/20 border-amber-500/30 text-amber-300"
-                            }`}
+                            className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-secondary/30 text-xs transition-all"
                           >
                             <div className="flex items-center gap-3">
-                              <div
-                                className={`h-8 w-8 rounded-full flex items-center justify-center font-extrabold text-xs shrink-0 ${
-                                  isSecondHalf ? "bg-purple-500/30 text-purple-200" : "bg-amber-500/30 text-amber-300"
-                                }`}
-                              >
+                              <div className="h-8 w-8 rounded-full flex items-center justify-center font-extrabold text-xs shrink-0 bg-foreground/10 text-foreground">
                                 {isSecondHalf ? "2nd" : "1st"}
                               </div>
                               <div>
@@ -1028,7 +1020,7 @@ export default function Purchases() {
                             <td className="py-2 font-mono font-bold text-primary">{it.cylinder_number ? `#${it.cylinder_number}` : "—"}</td>
                             <td className="py-2 font-mono text-muted-foreground">{it.serial_number}</td>
                             <td className="py-2">
-                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${it.fill_status === "filled" ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400"}`}>
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-foreground/10 text-foreground border border-foreground/15">
                                 {it.fill_status === "filled" ? "Filled" : "Empty"}
                               </span>
                             </td>
@@ -1048,11 +1040,11 @@ export default function Purchases() {
                   <Row k={`SGST @ ${viewing.sgst_rate}%`} v={Number(viewing.sgst_amount)} />
                   <Row k="Round off" v={Number(viewing.roundoff)} />
                   <div className="border-t border-border/60 mt-2 pt-2"><Row k="TOTAL BILL" v={Number(viewing.total)} bold big /></div>
-                  <div className="flex justify-between text-xs pt-1 text-emerald-400 font-bold">
+                  <div className="flex justify-between text-xs pt-1 font-bold">
                     <span>Total Paid So Far</span>
                     <span>₹{history.paid.toLocaleString()}</span>
                   </div>
-                  <div className="flex justify-between text-xs text-amber-400 font-bold">
+                  <div className="flex justify-between text-xs font-bold">
                     <span>Balance Remaining</span>
                     <span>₹{history.balance.toLocaleString()}</span>
                   </div>
