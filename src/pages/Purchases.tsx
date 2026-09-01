@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Truck, Eye, Flame, Circle, CheckCircle2, AlertCircle, Clock, Calendar, CreditCard, DollarSign, ArrowRight } from "lucide-react";
+import { Plus, Trash2, Truck, Eye, Flame, Circle, CheckCircle2, AlertCircle, Clock, Calendar, CreditCard, DollarSign, ArrowRight, Zap, Layers } from "lucide-react";
 import { toast } from "sonner";
 import { useCompany } from "@/hooks/useCompany";
 
@@ -29,6 +29,33 @@ export type PaymentInstallment = {
   method: string;
   notes?: string;
 };
+
+function parseBatchCylinderNumbers(input: string): number[] {
+  const result: Set<number> = new Set();
+  const parts = input.split(/[,;\n\s]+/);
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const rangeMatch = trimmed.match(/^(\d+)\s*(?:-|to|\.\.)\s*(\d+)$/i);
+    if (rangeMatch) {
+      const start = parseInt(rangeMatch[1], 10);
+      const end = parseInt(rangeMatch[2], 10);
+      if (!isNaN(start) && !isNaN(end)) {
+        const min = Math.min(start, end);
+        const max = Math.max(start, end);
+        for (let n = min; n <= max; n++) {
+          result.add(n);
+        }
+      }
+    } else {
+      const num = parseInt(trimmed, 10);
+      if (!isNaN(num) && num > 0) {
+        result.add(num);
+      }
+    }
+  }
+  return Array.from(result).sort((a, b) => a - b);
+}
 
 function getPaymentHistory(p: any): { 
   payments: PaymentInstallment[]; 
@@ -81,6 +108,11 @@ export default function Purchases() {
   const [open, setOpen] = useState(false);
   const [supplierOpen, setSupplierOpen] = useState(false);
   const [viewing, setViewing] = useState<any | null>(null);
+
+  // Batch Add Cylinders Multi-Type State
+  type BatchRow = { id: string; input: string; type_id: string; rate: string; fill_status: "filled" | "empty" };
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchRows, setBatchRows] = useState<BatchRow[]>([]);
 
   // New Payment Installment Modal State
   const [payModalItem, setPayModalItem] = useState<any | null>(null);
@@ -178,6 +210,101 @@ export default function Purchases() {
     cylinder_number: "", serial_number: "", type_id: types[0]?.id ?? "", hsn_code: "",
     rate: "", fill_status: "filled",
   }]);
+
+  const openBatchModal = () => {
+    const initialType = types[0]?.id ?? "";
+    const selType = types.find((t) => t.id === initialType);
+    setBatchRows([
+      {
+        id: "b-1",
+        input: "",
+        type_id: initialType,
+        rate: selType?.price ? String(selType.price) : "",
+        fill_status: "filled",
+      },
+    ]);
+    setBatchOpen(true);
+  };
+
+  const addBatchRow = () => {
+    const defaultType = types[batchRows.length % types.length]?.id ?? types[0]?.id ?? "";
+    const selType = types.find((t) => t.id === defaultType);
+    setBatchRows((curr) => [
+      ...curr,
+      {
+        id: `b-${Date.now()}-${curr.length + 1}`,
+        input: "",
+        type_id: defaultType,
+        rate: selType?.price ? String(selType.price) : "",
+        fill_status: "filled",
+      },
+    ]);
+  };
+
+  const updateBatchRow = (idx: number, patch: Partial<BatchRow>) => {
+    setBatchRows((curr) =>
+      curr.map((r, i) => {
+        if (i !== idx) return r;
+        const merged = { ...r, ...patch };
+        if (patch.type_id) {
+          const selType = types.find((t) => t.id === patch.type_id);
+          if (selType && !merged.rate) {
+            merged.rate = String(selType.price || 0);
+          }
+        }
+        return merged;
+      })
+    );
+  };
+
+  const removeBatchRow = (idx: number) => {
+    if (batchRows.length > 1) {
+      setBatchRows((curr) => curr.filter((_, i) => i !== idx));
+    }
+  };
+
+  const addBatchCylinders = () => {
+    const allNewLines: Line[] = [];
+    let totalCount = 0;
+
+    for (let idx = 0; idx < batchRows.length; idx++) {
+      const row = batchRows[idx];
+      if (!row.type_id) return toast.error(`Select cylinder type for Batch #${idx + 1}`);
+      const cylNums = parseBatchCylinderNumbers(row.input);
+      if (cylNums.length === 0) {
+        if (batchRows.length === 1) return toast.error("Enter valid cylinder numbers or ranges (e.g. 101-130)");
+        continue;
+      }
+
+      const selType = types.find((t) => t.id === row.type_id);
+      const rateToUse = row.rate.trim() || (selType?.price ? String(selType.price) : "0");
+      const hsnToUse = selType?.hsn_code ?? "";
+
+      for (const num of cylNums) {
+        let serial = "";
+        if (cylindersCache.has(num)) {
+          serial = cylindersCache.get(num)!.serial_number;
+        } else {
+          serial = `CYL-${String(num).padStart(4, "0")}`;
+        }
+        allNewLines.push({
+          cylinder_number: String(num),
+          serial_number: serial,
+          type_id: row.type_id,
+          hsn_code: hsnToUse,
+          rate: rateToUse,
+          fill_status: row.fill_status,
+        });
+      }
+      totalCount += cylNums.length;
+    }
+
+    if (allNewLines.length === 0) return toast.error("Enter valid cylinder numbers or ranges (e.g. 101-130)");
+
+    setLines((curr) => [...curr, ...allNewLines]);
+    toast.success(`Added ${totalCount} cylinders across ${batchRows.length} gas type(s) to purchase bill ✓`);
+    setBatchOpen(false);
+  };
 
   const updateLine = (idx: number, patch: Partial<Line>) => {
     setLines((curr) => curr.map((l, i) => {
@@ -523,8 +650,17 @@ export default function Purchases() {
                 {/* Cylinder lines */}
                 <div>
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
-                    <Label className="text-sm font-bold">Cylinders (Serial auto-fills for known cylinder #)</Label>
-                    <Button size="sm" variant="outline" onClick={addLine}><Plus className="h-3 w-3 mr-1" />Add cylinder</Button>
+                    <Label className="text-sm font-bold flex items-center gap-1.5">
+                      <span>Cylinders ({lines.length} items in bill)</span>
+                    </Label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button size="sm" variant="outline" onClick={openBatchModal} className="gap-1.5 border-primary/50 text-primary hover:bg-primary/10 font-bold">
+                        <Zap className="h-3.5 w-3.5" /> Batch Add (Ranges / List)
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={addLine}>
+                        <Plus className="h-3 w-3 mr-1" /> Single Cylinder
+                      </Button>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     {lines.map((l, i) => (
@@ -1058,6 +1194,154 @@ export default function Purchases() {
               </div>
             );
           })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* Batch Add Cylinders Dialog */}
+      <Dialog open={batchOpen} onOpenChange={setBatchOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-primary text-lg">
+              <Zap className="h-5 w-5" /> Batch Add Cylinders (Multi-Type Purchase)
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-1">
+            <div className="rounded-xl bg-secondary/30 p-3 border border-border/50 text-xs text-muted-foreground space-y-1">
+              <p className="font-semibold text-foreground">⚡ Multi-Type Batch Entry:</p>
+              <p>You can add different cylinder types in one purchase bill (e.g., 10 N2O, 15 CO2, 25 MO2). Enter ranges for each type below or click <strong>+ Add Another Type Batch</strong>.</p>
+            </div>
+
+            <div className="space-y-4">
+              {batchRows.map((row, idx) => {
+                const parsed = parseBatchCylinderNumbers(row.input);
+                return (
+                  <div key={row.id || idx} className="rounded-xl border border-border/60 bg-secondary/20 p-4 space-y-3.5 relative">
+                    <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                      <span className="text-xs font-bold text-primary uppercase tracking-wider flex items-center gap-1.5">
+                        <Layers className="h-3.5 w-3.5" /> Batch Row #{idx + 1}
+                        {parsed.length > 0 && (
+                          <span className="bg-emerald-500/15 text-emerald-400 font-mono font-extrabold text-[10px] px-2.5 py-0.5 rounded-full border border-emerald-500/30">
+                            {parsed.length} cylinders
+                          </span>
+                        )}
+                      </span>
+                      {batchRows.length > 1 && (
+                        <Button variant="ghost" size="sm" className="h-7 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => removeBatchRow(idx)}>
+                          <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete Row
+                        </Button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <Label className="text-xs font-semibold">Gas / Cylinder Type *</Label>
+                        <Select
+                          value={row.type_id}
+                          onValueChange={(v) => updateBatchRow(idx, { type_id: v })}
+                        >
+                          <SelectTrigger className="mt-1 h-9.5 text-xs font-medium"><SelectValue placeholder="Select type" /></SelectTrigger>
+                          <SelectContent>
+                            {types.map((t) => (
+                              <SelectItem key={t.id} value={t.id}>
+                                <span className="font-bold font-mono">{t.code}</span>
+                                <span className="text-muted-foreground ml-1 font-normal">— {t.name}</span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div>
+                        <Label className="text-xs font-semibold">Rate per Cylinder (₹)</Label>
+                        <Input
+                          type="number"
+                          value={row.rate}
+                          onChange={(e) => updateBatchRow(idx, { rate: e.target.value })}
+                          placeholder="1200"
+                          className="mt-1 h-9.5 font-mono text-xs"
+                        />
+                      </div>
+
+                      <div>
+                        <Label className="text-xs font-semibold mb-1 block">Fill Status</Label>
+                        <div className="flex h-9.5 rounded-md border border-border/60 overflow-hidden">
+                          <button
+                            type="button"
+                            onClick={() => updateBatchRow(idx, { fill_status: "filled" })}
+                            className={`flex-1 flex items-center justify-center gap-1 text-xs font-bold transition-all ${
+                              row.fill_status === "filled"
+                                ? "bg-foreground text-background shadow-sm"
+                                : "bg-secondary/40 text-muted-foreground hover:bg-secondary/70"
+                            }`}
+                          >
+                            <Flame className="h-3.5 w-3.5" /> Filled
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => updateBatchRow(idx, { fill_status: "empty" })}
+                            className={`flex-1 flex items-center justify-center gap-1 text-xs font-bold transition-all ${
+                              row.fill_status === "empty"
+                                ? "bg-foreground text-background shadow-sm"
+                                : "bg-secondary/40 text-muted-foreground hover:bg-secondary/70"
+                            }`}
+                          >
+                            <Circle className="h-3.5 w-3.5" /> Empty
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <Label className="text-xs font-semibold">Cylinder Numbers / Ranges *</Label>
+                      <Textarea
+                        value={row.input}
+                        onChange={(e) => updateBatchRow(idx, { input: e.target.value })}
+                        placeholder="e.g. 101-110 or 101, 102, 103"
+                        rows={2}
+                        className="font-mono text-xs mt-1"
+                      />
+                    </div>
+
+                    {row.input.trim() && (
+                      <div className="text-[11px] font-mono font-semibold bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-2.5 py-1.5 rounded-md flex items-center gap-1.5">
+                        {parsed.length === 0 ? (
+                          <span className="text-rose-400">⚠️ Enter numbers like 101-110 or 101, 102</span>
+                        ) : (
+                          <span>
+                            ✅ <strong>{parsed.length} cylinders parsed:</strong>{" "}
+                            {parsed.length > 8
+                              ? `${parsed.slice(0, 5).map((n) => `#${n}`).join(", ")} ... ${parsed.slice(-2).map((n) => `#${n}`).join(", ")}`
+                              : parsed.map((n) => `#${n}`).join(", ")}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <Button variant="outline" size="sm" onClick={addBatchRow} className="gap-1.5 text-xs font-semibold">
+                <Plus className="h-3.5 w-3.5" /> + Add Another Gas Type Batch
+              </Button>
+              {(() => {
+                const grandTotal = batchRows.reduce(
+                  (sum, r) => sum + parseBatchCylinderNumbers(r.input).length,
+                  0
+                );
+                return (
+                  <span className="text-xs font-mono font-bold text-primary">
+                    Total: {grandTotal} cylinders in this batch
+                  </span>
+                );
+              })()}
+            </div>
+
+            <Button onClick={addBatchCylinders} className="w-full h-11 text-sm font-bold uppercase tracking-wider gap-2">
+              <Zap className="h-4 w-4" /> Add All Multi-Type Batches to Purchase Bill
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

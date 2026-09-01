@@ -63,6 +63,8 @@ export default function Invoices() {
   const [items, setItems] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [types, setTypes] = useState<any[]>([]);
+  const [stockCylinders, setStockCylinders] = useState<any[]>([]);
+  const [issuedCylinders, setIssuedCylinders] = useState<any[]>([]);
   const [filter, setFilter] = useState("all");
   const [open, setOpen] = useState(false);
   const [customerOpen, setCustomerOpen] = useState(false);
@@ -91,8 +93,18 @@ export default function Invoices() {
     setItems(data ?? []);
   };
 
+  const loadCylinders = async () => {
+    const { data } = await (supabase.from("cylinders") as any)
+      .select("id, cylinder_number, serial_number, type_id, status, current_customer_id, fill_status, cylinder_types(code, name)")
+      .order("cylinder_number", { ascending: true, nullsFirst: false });
+    const all = data ?? [];
+    setStockCylinders(all.filter((c: any) => c.status === "in_stock"));
+    setIssuedCylinders(all.filter((c: any) => c.status === "issued"));
+  };
+
   useEffect(() => {
     load();
+    loadCylinders();
     (supabase.from("customers") as any).select("id, name, customer_number, gst_number, address, phone").eq("company", company).order("customer_number").then(({ data }: any) => setCustomers(data ?? []));
     supabase.from("cylinder_types").select("*").then(({ data }) => setTypes(data ?? []));
   }, [company]);
@@ -204,9 +216,40 @@ export default function Invoices() {
   const allIssued = lines.flatMap((l) => parseCylNums(l.issued_numbers));
   const allReturned = lines.flatMap((l) => parseCylNums(l.returned_numbers));
 
+  const toggleCylinderInLine = (idx: number, field: "issued_numbers" | "returned_numbers", cylNum: number) => {
+    setLines((curr) =>
+      curr.map((l, i) => {
+        if (i !== idx) return l;
+        const currentNums = parseCylNums(l[field]);
+        let updated: number[];
+        if (currentNums.includes(cylNum)) {
+          updated = currentNums.filter((n) => n !== cylNum);
+        } else {
+          updated = [...currentNums, cylNum].sort((a, b) => a - b);
+        }
+        const updatedStr = updated.join(", ");
+        const patch: Partial<LineItem> = { [field]: updatedStr };
+        if (field === "issued_numbers" && updated.length > 0) {
+          patch.quantity = updated.length;
+        }
+        return { ...l, ...patch };
+      })
+    );
+  };
+
   const save = async () => {
     if (!form.customer_id) return toast.error("Select a customer");
     if (lines.length === 0) return toast.error("Add at least one line item");
+
+    // Validate that all issued cylinders are purchased and in warehouse stock
+    const unpurchasedIssued = allIssued.filter(
+      (n) => !stockCylinders.some((c) => Number(c.cylinder_number) === n)
+    );
+    if (unpurchasedIssued.length > 0) {
+      return toast.error(
+        `Cylinder #${unpurchasedIssued.join(", #")} is NOT in warehouse stock! Only purchased cylinders in stock can be sold.`
+      );
+    }
 
     // Map payment_status to invoice status
     const invoiceStatus = form.payment_status === "paid" ? "paid" : "pending";
@@ -276,10 +319,68 @@ export default function Invoices() {
     });
     if (itemRows.length) await supabase.from("invoice_items").insert(itemRows);
 
-    toast.success("Invoice created ✓");
+    // Update database cylinder status & log transactions for issued & returned cylinders
+    for (const l of lines) {
+      const issuedNums = parseCylNums(l.issued_numbers);
+      for (const cylNum of issuedNums) {
+        const cyl = stockCylinders.find((c) => Number(c.cylinder_number) === cylNum);
+        if (cyl) {
+          await (supabase.from("cylinders") as any)
+            .update({
+              status: "issued",
+              current_customer_id: form.customer_id,
+              issued_at: new Date().toISOString(),
+            })
+            .eq("id", cyl.id);
+
+          await (supabase.from("transactions") as any).insert({
+            txn_type: "issue",
+            cylinder_id: cyl.id,
+            customer_id: form.customer_id,
+            type_id: l.type_id || cyl.type_id,
+            amount: Number(l.rate) || 0,
+            notes: `Issued in GST Invoice #${inv.invoice_number}`,
+            company,
+          });
+        }
+      }
+
+      const returnedNums = parseCylNums(l.returned_numbers);
+      for (const cylNum of returnedNums) {
+        let cyl = issuedCylinders.find((c) => Number(c.cylinder_number) === cylNum);
+        if (!cyl) {
+          const { data: found } = await (supabase.from("cylinders") as any)
+            .select("id, type_id")
+            .eq("cylinder_number", cylNum)
+            .maybeSingle();
+          cyl = found;
+        }
+        if (cyl) {
+          await (supabase.from("cylinders") as any)
+            .update({
+              status: "in_stock",
+              current_customer_id: null,
+            })
+            .eq("id", cyl.id);
+
+          await (supabase.from("transactions") as any).insert({
+            txn_type: "return",
+            cylinder_id: cyl.id,
+            customer_id: form.customer_id,
+            type_id: l.type_id || cyl.type_id,
+            amount: 0,
+            notes: `Returned to warehouse stock in GST Invoice #${inv.invoice_number}`,
+            company,
+          });
+        }
+      }
+    }
+
+    toast.success("Invoice created & cylinder stock updated ✓");
     setOpen(false);
     resetForm();
     load();
+    loadCylinders();
   };
 
   const setStatus = async (id: string, status: string) => {
@@ -497,31 +598,148 @@ export default function Invoices() {
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-border/30">
+                        {/* Issued Cylinder Numbers */}
                         <div>
-                          <Label className="text-[10px] text-emerald-400 flex items-center gap-1 mb-1">
-                            <ArrowDownToLine className="h-3 w-3" /> Issued Cylinder Numbers
-                          </Label>
-                          <Input className="font-mono text-xs h-9" value={l.issued_numbers} onChange={(e) => updateLine(i, { issued_numbers: e.target.value })} placeholder="e.g. 5, 6, 42, 100" />
-                          {l.issued_numbers && (
-                            <div className="flex flex-wrap gap-1 mt-1.5">
-                              {parseCylNums(l.issued_numbers).map((n) => (
-                                <span key={n} className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-400">#{n}</span>
-                              ))}
-                            </div>
-                          )}
+                          {(() => {
+                            const availStock = stockCylinders.filter((c) => !l.type_id || c.type_id === l.type_id);
+                            const currentIssued = parseCylNums(l.issued_numbers);
+                            const invalidIssued = currentIssued.filter(
+                              (n) => !stockCylinders.some((c) => Number(c.cylinder_number) === n)
+                            );
+                            return (
+                              <>
+                                <div className="flex items-center justify-between mb-1">
+                                  <Label className="text-[10px] text-emerald-400 flex items-center gap-1">
+                                    <ArrowDownToLine className="h-3 w-3" /> Issued Cylinder Numbers
+                                  </Label>
+                                  <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                                    📦 {availStock.length} in warehouse stock
+                                  </span>
+                                </div>
+                                <Input
+                                  className={cn(
+                                    "font-mono text-xs h-9",
+                                    invalidIssued.length > 0 && "border-rose-500/70 focus-visible:ring-rose-500/40 bg-rose-500/5"
+                                  )}
+                                  value={l.issued_numbers}
+                                  onChange={(e) => updateLine(i, { issued_numbers: e.target.value })}
+                                  placeholder="Select from stock below or type e.g. 5, 6"
+                                />
+
+                                {/* Quick-select Badges for Warehouse Stock */}
+                                {availStock.length > 0 ? (
+                                  <div className="mt-1.5 space-y-1">
+                                    <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">
+                                      Select purchased cylinder from warehouse:
+                                    </div>
+                                    <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1.5 rounded-lg border border-border/40 bg-secondary/20">
+                                      {availStock.map((c) => {
+                                        const num = Number(c.cylinder_number);
+                                        const isSelected = currentIssued.includes(num);
+                                        return (
+                                          <button
+                                            key={c.id}
+                                            type="button"
+                                            onClick={() => toggleCylinderInLine(i, "issued_numbers", num)}
+                                            className={cn(
+                                              "px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-all cursor-pointer",
+                                              isSelected
+                                                ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/50 shadow-sm scale-105"
+                                                : "bg-secondary/60 text-foreground border-border/50 hover:bg-emerald-500/10 hover:border-emerald-500/30"
+                                            )}
+                                            title={`Serial: ${c.serial_number} (${c.fill_status || "filled"})`}
+                                          >
+                                            #{num || c.serial_number}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="mt-1 text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
+                                    ⚠️ No purchased cylinders in stock for this type. Purchase cylinders first in Purchases.
+                                  </div>
+                                )}
+
+                                {/* Warning if unpurchased / out-of-stock cylinder typed */}
+                                {invalidIssued.length > 0 && (
+                                  <div className="text-[11px] font-bold text-rose-400 bg-rose-500/10 border border-rose-500/30 rounded px-2 py-1.5 mt-1.5 flex items-center gap-1">
+                                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                                    <span>⚠️ Cylinder #{invalidIssued.join(", #")} is NOT in warehouse stock! Only purchased cylinders can be sold.</span>
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
+
+                        {/* Returned Cylinder Numbers */}
                         <div>
-                          <Label className="text-[10px] text-amber-400 flex items-center gap-1 mb-1">
-                            <ArrowUpFromLine className="h-3 w-3" /> Returned Cylinder Numbers
-                          </Label>
-                          <Input className="font-mono text-xs h-9" value={l.returned_numbers} onChange={(e) => updateLine(i, { returned_numbers: e.target.value })} placeholder="e.g. 3, 4 (empty returned)" />
-                          {l.returned_numbers && (
-                            <div className="flex flex-wrap gap-1 mt-1.5">
-                              {parseCylNums(l.returned_numbers).map((n) => (
-                                <span key={n} className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/15 text-amber-400">#{n}</span>
-                              ))}
-                            </div>
-                          )}
+                          {(() => {
+                            const availIssued = issuedCylinders.filter((c) => !l.type_id || c.type_id === l.type_id);
+                            const currentReturned = parseCylNums(l.returned_numbers);
+                            return (
+                              <>
+                                <div className="flex items-center justify-between mb-1">
+                                  <Label className="text-[10px] text-amber-400 flex items-center gap-1">
+                                    <ArrowUpFromLine className="h-3 w-3" /> Returned Cylinder Numbers
+                                  </Label>
+                                  {currentReturned.length > 0 && (
+                                    <span className="text-[10px] text-amber-400 font-bold bg-amber-500/15 px-2 py-0.5 rounded border border-amber-500/30">
+                                      ↑ {currentReturned.length} Marked Returned
+                                    </span>
+                                  )}
+                                </div>
+                                <Input
+                                  className="font-mono text-xs h-9"
+                                  value={l.returned_numbers}
+                                  onChange={(e) => updateLine(i, { returned_numbers: e.target.value })}
+                                  placeholder="Select below or type e.g. 3, 4"
+                                />
+
+                                {/* Quick-select Badges for Issued Cylinders to return */}
+                                {availIssued.length > 0 && (
+                                  <div className="mt-1.5 space-y-1">
+                                    <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">
+                                      Click to mark issued cylinder as returned:
+                                    </div>
+                                    <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1.5 rounded-lg border border-border/40 bg-secondary/20">
+                                      {availIssued.map((c) => {
+                                        const num = Number(c.cylinder_number);
+                                        const isSelected = currentReturned.includes(num);
+                                        return (
+                                          <button
+                                            key={c.id}
+                                            type="button"
+                                            onClick={() => toggleCylinderInLine(i, "returned_numbers", num)}
+                                            className={cn(
+                                              "px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-all cursor-pointer",
+                                              isSelected
+                                                ? "bg-amber-500/25 text-amber-400 border-amber-500/60 shadow-sm scale-105"
+                                                : "bg-secondary/60 text-foreground border-border/50 hover:bg-amber-500/10 hover:border-amber-500/30"
+                                            )}
+                                            title={`Serial: ${c.serial_number}`}
+                                          >
+                                            #{num || c.serial_number} {isSelected ? "✓ Returned" : ""}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {currentReturned.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-1.5">
+                                    {currentReturned.map((n) => (
+                                      <span key={n} className="px-2 py-0.5 rounded text-[10px] font-mono font-extrabold bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center gap-1">
+                                        <ArrowUpFromLine className="h-3 w-3" /> ↑ Returned to Stock: #{n}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
                       </div>
 

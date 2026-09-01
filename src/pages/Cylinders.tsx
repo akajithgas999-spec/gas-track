@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Plus, Search, Trash2, Pencil, Package, TrendingUp, Wrench, ShieldAlert,
-  ShoppingCart, CalendarDays, Hash, Tag, ChevronDown, ChevronUp,
+  ShoppingCart, CalendarDays, Hash, Tag, ChevronDown, ChevronUp, Flame, Circle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useCompany } from "@/hooks/useCompany";
@@ -36,6 +36,7 @@ export default function Cylinders() {
     serial_number: "",
     type_id: "",
     status: "in_stock",
+    fill_status: "filled" as "filled" | "empty",
     notes: "",
   });
 
@@ -46,6 +47,7 @@ export default function Cylinders() {
     cylinder_number: "",
     serial_number: "",
     type_id: "",
+    fill_status: "filled" as "filled" | "empty",
     notes: "",
   });
   const [purchases, setPurchases] = useState<any[]>([]);
@@ -76,7 +78,7 @@ export default function Cylinders() {
 
   const openNew = () => {
     setEdit(null);
-    setForm({ cylinder_number: "", serial_number: "", type_id: types[0]?.id ?? "", status: "in_stock", notes: "" });
+    setForm({ cylinder_number: "", serial_number: "", type_id: types[0]?.id ?? "", status: "in_stock", fill_status: "filled", notes: "" });
     setOpen(true);
   };
 
@@ -87,6 +89,7 @@ export default function Cylinders() {
       serial_number: c.serial_number,
       type_id: c.type_id,
       status: c.status,
+      fill_status: c.fill_status || "filled",
       notes: c.notes ?? "",
     });
     setOpen(true);
@@ -103,6 +106,7 @@ export default function Cylinders() {
       cylinder_number: cylNum,
       type_id: form.type_id,
       status: form.status as any,
+      fill_status: form.fill_status,
       notes: form.notes.trim() || null,
     };
     const { error } = edit
@@ -129,6 +133,7 @@ export default function Cylinders() {
       cylinder_number: cylNum,
       type_id: buyForm.type_id,
       status: "in_stock",
+      fill_status: buyForm.fill_status,
       notes: buyForm.notes.trim() || null,
       purchased_at: new Date(buyForm.purchase_date).toISOString(),
     };
@@ -149,6 +154,7 @@ export default function Cylinders() {
       cylinder_number: "",
       serial_number: "",
       type_id: "",
+      fill_status: "filled",
       notes: "",
     });
     load();
@@ -292,6 +298,33 @@ export default function Cylinders() {
                   </Select>
                 </div>
                 <div>
+                  <Label className="text-xs text-muted-foreground mb-1 block">Fill Status *</Label>
+                  <div className="flex rounded-md border border-border/60 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setBuyForm({ ...buyForm, fill_status: "filled" })}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold transition-all ${
+                        buyForm.fill_status === "filled"
+                          ? "bg-foreground text-background shadow-sm"
+                          : "bg-secondary/40 text-muted-foreground hover:bg-secondary/70"
+                      }`}
+                    >
+                      <Flame className="h-3.5 w-3.5" /> Filled
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBuyForm({ ...buyForm, fill_status: "empty" })}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold transition-all ${
+                        buyForm.fill_status === "empty"
+                          ? "bg-foreground text-background shadow-sm"
+                          : "bg-secondary/40 text-muted-foreground hover:bg-secondary/70"
+                      }`}
+                    >
+                      <Circle className="h-3.5 w-3.5" /> Empty
+                    </button>
+                  </div>
+                </div>
+                <div>
                   <Label className="text-xs text-muted-foreground mb-1 block">Notes (optional)</Label>
                   <Textarea
                     value={buyForm.notes}
@@ -334,12 +367,41 @@ export default function Cylinders() {
                     <SelectContent>{types.map((t) => <SelectItem key={t.id} value={t.id}>{t.code} — {t.name}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div>
-                  <Label>Status</Label>
-                  <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>{STATUS.map((s) => <SelectItem key={s} value={s}>{s.replace("_", " ")}</SelectItem>)}</SelectContent>
-                  </Select>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label>Status</Label>
+                    <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>{STATUS.map((s) => <SelectItem key={s} value={s}>{s.replace("_", " ")}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="mb-1 block">Fill Status</Label>
+                    <div className="flex h-9 rounded-md border border-border/60 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, fill_status: "filled" })}
+                        className={`flex-1 flex items-center justify-center gap-1 text-xs font-bold transition-all ${
+                          form.fill_status === "filled"
+                            ? "bg-foreground text-background shadow-sm"
+                            : "bg-secondary/40 text-muted-foreground hover:bg-secondary/70"
+                        }`}
+                      >
+                        <Flame className="h-3.5 w-3.5" /> Filled
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, fill_status: "empty" })}
+                        className={`flex-1 flex items-center justify-center gap-1 text-xs font-bold transition-all ${
+                          form.fill_status === "empty"
+                            ? "bg-foreground text-background shadow-sm"
+                            : "bg-secondary/40 text-muted-foreground hover:bg-secondary/70"
+                        }`}
+                      >
+                        <Circle className="h-3.5 w-3.5" /> Empty
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 <div><Label>Notes</Label><Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
                 <Button onClick={save} className="w-full">Save</Button>
@@ -358,7 +420,8 @@ export default function Cylinders() {
                 <th className="text-left px-4 py-3">Cyl #</th>
                 <th className="text-left px-4 py-3">Serial</th>
                 <th className="text-left px-4 py-3">Type</th>
-                <th className="text-left px-4 py-3">Status</th>
+                <th className="text-left px-4 py-3">Fill Status</th>
+                <th className="text-left px-4 py-3">Stock Status</th>
                 <th className="text-left px-4 py-3">Purchased Date</th>
                 <th className="text-left px-4 py-3">Customer</th>
                 <th className="text-right px-4 py-3">Actions</th>
@@ -372,6 +435,14 @@ export default function Cylinders() {
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{c.serial_number}</td>
                   <td className="px-4 py-3">{c.cylinder_types?.code} <span className="text-muted-foreground">— {c.cylinder_types?.name}</span></td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-extrabold uppercase border ${
+                      c.fill_status === "empty" ? "bg-amber-500/10 text-amber-400 border-amber-500/30" : "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                    }`}>
+                      {c.fill_status === "empty" ? <Circle className="h-3 w-3" /> : <Flame className="h-3 w-3" />}
+                      {c.fill_status === "empty" ? "Empty" : "Filled"}
+                    </span>
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${STATUS_COLOR[c.status]}`}>{c.status.replace("_", " ")}</span>
                   </td>
