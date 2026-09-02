@@ -519,7 +519,7 @@ export default function MyCylinders() {
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search Cylinder #, Serial, Customer, Supplier, Batch..."
+              placeholder="Search Cylinder #, Serial, Customer, Supplier, Bill #..."
               className="pl-9 h-9 text-xs"
             />
           </div>
@@ -635,7 +635,7 @@ export default function MyCylinders() {
                 <th className="text-left px-4 py-3">Gas Type</th>
                 <th className="text-left px-4 py-3">Purchased Date</th>
                 <th className="text-left px-4 py-3">Supplier / Vendor</th>
-                <th className="text-left px-4 py-3">Batch # / Bill</th>
+                <th className="text-left px-4 py-3">Bill Number</th>
                 <th className="text-left px-4 py-3">Year</th>
                 <th className="text-left px-4 py-3">Location / Holder</th>
                 <th className="text-right px-4 py-3">Actions</th>
@@ -835,7 +835,7 @@ export default function MyCylinders() {
                 />
               </div>
               <div>
-                <Label className="text-xs">Batch # / Purchase Bill #</Label>
+                <Label className="text-xs">Bill Number</Label>
                 <Input
                   className="mt-1 h-9 font-mono text-xs"
                   value={addForm.batch_number}
@@ -1064,7 +1064,7 @@ export default function MyCylinders() {
                   />
                 </div>
                 <div>
-                  <Label className="text-xs">Batch # / Bill #</Label>
+                  <Label className="text-xs">Bill Number</Label>
                   <Input
                     className="mt-1 h-9 font-mono text-xs"
                     value={editForm.batch_number}
