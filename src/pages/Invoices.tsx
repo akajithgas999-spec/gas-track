@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Plus, CheckCircle2, Clock, X, Trash2, Printer,
+  Plus, CheckCircle2, Clock, X, Trash2, Printer, Pencil,
   ArrowDownToLine, ArrowUpFromLine, Package, Check, ChevronsUpDown,
   AlertCircle, Banknote, MessageSquare, Send, Copy,
 } from "lucide-react";
@@ -81,6 +81,71 @@ export default function Invoices() {
   const [customerOpen, setCustomerOpen] = useState(false);
   const [viewing, setViewing] = useState<any | null>(null);
   const [smsOpen, setSmsOpen] = useState(false);
+
+  // Edit Invoice Cylinders State
+  const [editCylModal, setEditCylModal] = useState<any | null>(null);
+  const [editIssuedInput, setEditIssuedInput] = useState("");
+  const [editReturnedInput, setEditReturnedInput] = useState("");
+
+  const openEditCylinders = (inv: any) => {
+    const rawIssued = Array.isArray(inv.issued_cylinder_numbers)
+      ? inv.issued_cylinder_numbers.join(", ")
+      : typeof inv.issued_cylinder_numbers === "string"
+      ? inv.issued_cylinder_numbers
+      : "";
+    const rawReturned = Array.isArray(inv.returned_cylinder_numbers)
+      ? inv.returned_cylinder_numbers.join(", ")
+      : typeof inv.returned_cylinder_numbers === "string"
+      ? inv.returned_cylinder_numbers
+      : "";
+    setEditIssuedInput(rawIssued);
+    setEditReturnedInput(rawReturned);
+    setEditCylModal(inv);
+  };
+
+  const saveInvoiceCylinders = async () => {
+    if (!editCylModal) return;
+    const newIssued = parseCylNums(editIssuedInput);
+    const newReturned = parseCylNums(editReturnedInput);
+
+    const { error } = await (supabase.from("invoices") as any)
+      .update({
+        issued_cylinder_numbers: newIssued,
+        returned_cylinder_numbers: newReturned,
+      })
+      .eq("id", editCylModal.id);
+
+    if (error) return toast.error(error.message);
+
+    // Sync cylinders database status
+    for (const cylId of newIssued) {
+      const isPure = /^\d+$/.test(cylId);
+      const { data: found } = isPure
+        ? await (supabase.from("cylinders") as any).select("id").eq("cylinder_number", parseInt(cylId, 10)).maybeSingle()
+        : await (supabase.from("cylinders") as any).select("id").eq("serial_number", cylId).maybeSingle();
+      if (found) {
+        await (supabase.from("cylinders") as any)
+          .update({
+            status: "issued",
+            current_customer_id: editCylModal.customer_id,
+            issued_at: editCylModal.billing_date ? new Date(editCylModal.billing_date).toISOString() : new Date().toISOString(),
+          })
+          .eq("id", found.id);
+      }
+    }
+
+    toast.success(`Updated cylinder numbers for Invoice #${editCylModal.invoice_number} ✓`);
+    setEditCylModal(null);
+    if (viewing?.id === editCylModal.id) {
+      setViewing((prev: any) => ({
+        ...prev,
+        issued_cylinder_numbers: newIssued,
+        returned_cylinder_numbers: newReturned,
+      }));
+    }
+    load();
+    loadCylinders();
+  };
 
   const [form, setForm] = useState({
     customer_id: "",
@@ -984,7 +1049,8 @@ export default function Invoices() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right space-x-1">
-                      <Button size="sm" variant="ghost" onClick={() => setViewing(i)}><Printer className="h-3 w-3" /></Button>
+                      <Button size="sm" variant="ghost" title="Print / View Invoice" onClick={() => setViewing(i)}><Printer className="h-3 w-3" /></Button>
+                      <Button size="sm" variant="ghost" title="Edit Issued Cylinders" onClick={() => openEditCylinders(i)} className="text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10"><Pencil className="h-3 w-3" /></Button>
                       {i.status !== "paid" && (
                         <Button
                           size="sm" variant="ghost"
@@ -1013,6 +1079,16 @@ export default function Invoices() {
           {viewing && (() => {
             const vPayStatus: PaymentStatus = viewing.payment_status ?? (viewing.status === "paid" ? "paid" : "unpaid");
             const vSt = PAY_STATUS_STYLES[vPayStatus] ?? PAY_STATUS_STYLES.unpaid;
+            const vIssued = Array.isArray(viewing.issued_cylinder_numbers)
+              ? viewing.issued_cylinder_numbers.map(String)
+              : typeof viewing.issued_cylinder_numbers === "string"
+              ? parseCylNums(viewing.issued_cylinder_numbers)
+              : [];
+            const vReturned = Array.isArray(viewing.returned_cylinder_numbers)
+              ? viewing.returned_cylinder_numbers.map(String)
+              : typeof viewing.returned_cylinder_numbers === "string"
+              ? parseCylNums(viewing.returned_cylinder_numbers)
+              : [];
             return (
               <div className="space-y-4">
                 <div className="flex items-start justify-between border-b border-border/60 pb-3">
@@ -1028,21 +1104,32 @@ export default function Invoices() {
                   {viewing.customers?.address && <div className="text-xs text-muted-foreground">{viewing.customers.address}</div>}
                   {viewing.gst_number && <div className="text-xs font-mono">GSTIN: {viewing.gst_number}</div>}
                 </div>
-                {((viewing.issued_cylinder_numbers ?? []).length > 0 || (viewing.returned_cylinder_numbers ?? []).length > 0) && (
-                  <div className="p-3 rounded-lg border border-border/40 bg-secondary/20 space-y-2">
+                <div className="p-3 rounded-lg border border-border/40 bg-secondary/20 space-y-2">
+                  <div className="flex items-center justify-between">
                     <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Cylinder Details</div>
-                    <div className="grid grid-cols-2 gap-3 text-xs">
-                      <div>
-                        <div className="font-semibold text-emerald-400 mb-1">↓ Issued ({(viewing.issued_cylinder_numbers ?? []).length})</div>
-                        <div className="flex flex-wrap gap-1">{(viewing.issued_cylinder_numbers ?? []).map((n: number) => <span key={n} className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 text-[10px] font-bold font-mono">#{n}</span>)}</div>
+                    <Button size="sm" variant="ghost" className="h-6 text-[10px] font-semibold text-primary gap-1" onClick={() => openEditCylinders(viewing)}>
+                      <Pencil className="h-3 w-3" /> Edit Cylinders
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <div className="font-semibold text-emerald-400 mb-1">↓ Issued ({vIssued.length})</div>
+                      <div className="flex flex-wrap gap-1">
+                        {vIssued.length > 0
+                          ? vIssued.map((n: string) => <span key={n} className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 text-[10px] font-bold font-mono">#{n}</span>)
+                          : <span className="text-muted-foreground font-normal">—</span>}
                       </div>
-                      <div>
-                        <div className="font-semibold text-amber-400 mb-1">↑ Returned ({(viewing.returned_cylinder_numbers ?? []).length})</div>
-                        <div className="flex flex-wrap gap-1">{(viewing.returned_cylinder_numbers ?? []).map((n: number) => <span key={n} className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[10px] font-bold font-mono">#{n}</span>)}</div>
+                    </div>
+                    <div>
+                      <div className="font-semibold text-amber-400 mb-1">↑ Returned ({vReturned.length})</div>
+                      <div className="flex flex-wrap gap-1">
+                        {vReturned.length > 0
+                          ? vReturned.map((n: string) => <span key={n} className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[10px] font-bold font-mono">#{n}</span>)
+                          : <span className="text-muted-foreground font-normal">—</span>}
                       </div>
                     </div>
                   </div>
-                )}
+                </div>
                 <div className="p-3 rounded-lg bg-secondary/50 space-y-1.5 font-mono text-sm">
                   <AmtRow k="Taxable" v={Number(viewing.taxable_amount)} />
                   {Number(viewing.discount) > 0 && <AmtRow k="Discount" v={-Number(viewing.discount)} />}
@@ -1066,6 +1153,58 @@ export default function Invoices() {
               </div>
             );
           })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Edit Invoice Cylinders Modal ── */}
+      <Dialog open={!!editCylModal} onOpenChange={(v) => !v && setEditCylModal(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-primary">
+              <Pencil className="h-5 w-5" /> Edit Issued / Returned Cylinders
+            </DialogTitle>
+          </DialogHeader>
+          {editCylModal && (
+            <div className="space-y-4 pt-1">
+              <div className="text-xs bg-secondary/30 p-2.5 rounded-lg border border-border/40">
+                <span className="font-bold text-foreground">Invoice #{editCylModal.invoice_number}</span>
+                <span className="text-muted-foreground ml-1 font-normal">— {editCylModal.customers?.name}</span>
+              </div>
+
+              <div>
+                <Label className="text-xs font-semibold text-emerald-400 flex items-center gap-1 mb-1">
+                  <ArrowDownToLine className="h-3.5 w-3.5" /> Issued Cylinder Numbers
+                </Label>
+                <Textarea
+                  value={editIssuedInput}
+                  onChange={(e) => setEditIssuedInput(e.target.value)}
+                  placeholder="e.g. 208, 763, 119, 2001, 2002 or A101-A105"
+                  rows={3}
+                  className="font-mono text-xs mt-1"
+                />
+                <div className="text-[10px] text-muted-foreground mt-1">
+                  Separate numbers with commas (e.g. <code className="font-mono bg-secondary px-1 py-0.5 rounded">208, 763, 119, 2001, 2002</code>)
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-xs font-semibold text-amber-400 flex items-center gap-1 mb-1">
+                  <ArrowUpFromLine className="h-3.5 w-3.5" /> Returned Cylinder Numbers
+                </Label>
+                <Textarea
+                  value={editReturnedInput}
+                  onChange={(e) => setEditReturnedInput(e.target.value)}
+                  placeholder="e.g. 101, 102"
+                  rows={2}
+                  className="font-mono text-xs mt-1"
+                />
+              </div>
+
+              <Button onClick={saveInvoiceCylinders} className="w-full h-10 text-xs font-bold uppercase tracking-wider gap-2">
+                <Check className="h-4 w-4" /> Save Updated Cylinder Numbers
+              </Button>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

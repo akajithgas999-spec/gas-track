@@ -473,15 +473,18 @@ export default function Purchases() {
     const newCache = new Map(cylindersCache);
 
     for (const l of lines) {
-      const cylNum = l.cylinder_number.trim() ? parseInt(l.cylinder_number.trim(), 10) : null;
-      const serialNum = l.serial_number.trim() || (cylNum ? `CYL-${String(cylNum).padStart(4, "0")}` : "");
+      const rawNum = l.cylinder_number.trim();
+      const isPureNum = /^\d+$/.test(rawNum);
+      const cylNum = isPureNum ? parseInt(rawNum, 10) : null;
+      const serialNum = l.serial_number.trim() || (isPureNum ? `CYL-${rawNum.padStart(4, "0")}` : rawNum.toUpperCase());
+      const purchaseDate = form.bill_date ? new Date(form.bill_date).toISOString() : new Date().toISOString();
 
       if (cylNum && serialNum) {
         newCache.set(cylNum, { serial_number: serialNum, type_id: l.type_id });
       }
 
       let cylinderId: string | null = null;
-      if (cylNum) {
+      if (cylNum !== null) {
         const { data: existing } = await (supabase.from("cylinders") as any).select("id").eq("cylinder_number", cylNum).maybeSingle();
         if (existing) {
           cylinderId = existing.id;
@@ -489,6 +492,7 @@ export default function Purchases() {
             status: "in_stock",
             current_customer_id: null,
             fill_status: l.fill_status,
+            purchased_at: purchaseDate,
           } as any).eq("id", existing.id);
         } else {
           const { data: created } = await supabase.from("cylinders").insert({
@@ -497,6 +501,7 @@ export default function Purchases() {
             type_id: l.type_id,
             status: "in_stock",
             fill_status: l.fill_status,
+            purchased_at: purchaseDate,
           } as any).select().single();
           cylinderId = created?.id ?? null;
         }
@@ -508,6 +513,7 @@ export default function Purchases() {
             status: "in_stock",
             current_customer_id: null,
             fill_status: l.fill_status,
+            purchased_at: purchaseDate,
           } as any).eq("id", existing.id);
         } else {
           const { data: created } = await supabase.from("cylinders").insert({
@@ -515,6 +521,7 @@ export default function Purchases() {
             type_id: l.type_id,
             status: "in_stock",
             fill_status: l.fill_status,
+            purchased_at: purchaseDate,
           } as any).select().single();
           cylinderId = created?.id ?? null;
         }
