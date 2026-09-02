@@ -135,10 +135,10 @@ export default function MyCylinders() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [fillFilter, setFillFilter] = useState("all");
 
-  // Calendar Date Filter state
-  const [dateRangeType, setDateRangeType] = useState("all");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  // Visual Real Calendar View Month state
+  const [calViewYear, setCalViewYear] = useState(new Date().getFullYear());
+  const [calViewMonth, setCalViewMonth] = useState(new Date().getMonth());
+  const [calTab, setCalTab] = useState<"calendar" | "presets" | "batches">("calendar");
 
   // Clicked Purchase Date Details Modal state
   const [viewDateModalDate, setViewDateModalDate] = useState<string | null>(null);
@@ -146,7 +146,6 @@ export default function MyCylinders() {
   // Multi-Date Selection Filter state
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
   const [multiDateModalOpen, setMultiDateModalOpen] = useState(false);
-  const [customMultiDate, setCustomMultiDate] = useState("");
 
   // Modals state
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -543,9 +542,9 @@ export default function MyCylinders() {
         </Card>
       </div>
 
-      {/* ── SEARCH & FILTERS BAR WITH CALENDAR DATE RANGE ── */}
+      {/* ── SEARCH & FILTERS BAR WITH REAL CALENDAR ── */}
       <Card className="bg-card border-border/60 p-3.5 space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-6 gap-2.5 items-center">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-center">
           {/* Search bar */}
           <div className="relative sm:col-span-2">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -570,80 +569,20 @@ export default function MyCylinders() {
             </Select>
           </div>
 
-          {/* Date Presets Dropdown */}
+          {/* Real Calendar Trigger Button */}
           <div className="sm:col-span-1">
-            <Select
-              value={dateRangeType}
-              onValueChange={(val) => {
-                setDateRangeType(val);
-                const today = new Date().toISOString().slice(0, 10);
-                if (val === "all") {
-                  setFromDate("");
-                  setToDate("");
-                } else if (val === "today") {
-                  setFromDate(today);
-                  setToDate(today);
-                } else if (val === "this_month") {
-                  const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
-                  setFromDate(firstDay);
-                  setToDate(today);
-                } else if (val === "this_year") {
-                  const janFirst = `${new Date().getFullYear()}-01-01`;
-                  setFromDate(janFirst);
-                  setToDate(today);
-                }
-              }}
-            >
-              <SelectTrigger className="h-9 text-xs">
-                <Calendar className="h-3.5 w-3.5 mr-1.5 text-primary shrink-0" />
-                <SelectValue placeholder="Date Filter" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">📅 All Time (Any Date)</SelectItem>
-                <SelectItem value="today">⚡ Purchased Today</SelectItem>
-                <SelectItem value="this_month">📅 Purchased This Month</SelectItem>
-                <SelectItem value="this_year">🗓️ Purchased This Year</SelectItem>
-                <SelectItem value="custom">✏️ Custom Range</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* From Date Input */}
-          <div className="sm:col-span-1">
-            <Input
-              type="date"
-              value={fromDate}
-              onChange={(e) => {
-                setFromDate(e.target.value);
-                setDateRangeType("custom");
-              }}
-              title="From Purchased Date"
-              className="h-9 text-xs font-mono"
-            />
-          </div>
-
-          {/* To Date Input */}
-          <div className="sm:col-span-1 flex gap-1">
-            <Input
-              type="date"
-              value={toDate}
-              onChange={(e) => {
-                setToDate(e.target.value);
-                setDateRangeType("custom");
-              }}
-              title="To Purchased Date"
-              className="h-9 text-xs font-mono flex-1"
-            />
             <Button
               type="button"
-              variant={selectedDates.length > 0 ? "default" : "outline"}
-              size="sm"
+              variant={selectedDates.length > 0 || fromDate || toDate ? "default" : "outline"}
               onClick={() => setMultiDateModalOpen(true)}
-              className="h-9 px-2 text-xs font-bold shrink-0 gap-1"
-              title="Select specific multiple dates (e.g. 5th, 10th)"
+              className="w-full h-9 text-xs font-bold gap-2"
             >
-              <Calendar className="h-3.5 w-3.5" />
-              {selectedDates.length > 0 ? `(${selectedDates.length})` : "Multi"}
+              <Calendar className="h-4 w-4 shrink-0" />
+              {selectedDates.length > 0
+                ? `📅 ${selectedDates.length} Date(s) Selected`
+                : fromDate || toDate
+                ? `📅 Range Active`
+                : "🗓️ Calendar Date Filter"}
             </Button>
           </div>
         </div>
@@ -1352,63 +1291,288 @@ export default function MyCylinders() {
         </DialogContent>
       </Dialog>
 
-      {/* ── MODAL: MULTI-DATE CALENDAR SELECTION ── */}
+      {/* ── MODAL: REAL INTERACTIVE MONTHLY CALENDAR CONTAINER ── */}
       <Dialog open={multiDateModalOpen} onOpenChange={setMultiDateModalOpen}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-primary pr-6">
-              <Calendar className="h-5 w-5 shrink-0" /> Select Multiple Purchase Dates
+              <Calendar className="h-5 w-5 shrink-0" /> Interactive Calendar & Date Filters
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 pt-1">
-            <div className="text-xs text-muted-foreground">
-              Select specific purchase dates below to filter and generate custom reports for selected dates:
-            </div>
-
-            {/* Custom Date Input Add Button */}
-            <div className="flex gap-2 items-center bg-secondary/30 p-2.5 rounded-lg border border-border/60">
-              <Input
-                type="date"
-                value={customMultiDate}
-                onChange={(e) => setCustomMultiDate(e.target.value)}
-                className="h-8 text-xs font-mono flex-1"
-              />
-              <Button
+            {/* View Mode Tabs */}
+            <div className="flex p-1 bg-secondary/50 rounded-lg text-xs font-bold gap-1 border border-border/50">
+              <button
                 type="button"
-                size="sm"
-                className="h-8 text-xs font-bold gap-1"
-                onClick={() => {
-                  if (customMultiDate && !selectedDates.includes(customMultiDate)) {
-                    setSelectedDates((prev) => [...prev, customMultiDate]);
-                    setCustomMultiDate("");
-                  }
-                }}
+                onClick={() => setCalTab("calendar")}
+                className={cn(
+                  "flex-1 py-1.5 px-2 rounded-md transition-all flex items-center justify-center gap-1.5 cursor-pointer",
+                  calTab === "calendar" ? "bg-background text-primary shadow-xs" : "text-muted-foreground hover:text-foreground"
+                )}
               >
-                <Plus className="h-3.5 w-3.5" /> Add Date
-              </Button>
+                <Calendar className="h-3.5 w-3.5" /> Calendar Grid
+              </button>
+              <button
+                type="button"
+                onClick={() => setCalTab("presets")}
+                className={cn(
+                  "flex-1 py-1.5 px-2 rounded-md transition-all flex items-center justify-center gap-1.5 cursor-pointer",
+                  calTab === "presets" ? "bg-background text-primary shadow-xs" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Filter className="h-3.5 w-3.5" /> Presets & Range
+              </button>
+              <button
+                type="button"
+                onClick={() => setCalTab("batches")}
+                className={cn(
+                  "flex-1 py-1.5 px-2 rounded-md transition-all flex items-center justify-center gap-1.5 cursor-pointer",
+                  calTab === "batches" ? "bg-background text-primary shadow-xs" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Package className="h-3.5 w-3.5" /> Batches List
+              </button>
             </div>
 
-            {/* Distinct Purchase Dates List from Inventory */}
-            {(() => {
+            {/* TAB 1: REAL VISUAL MONTHLY CALENDAR GRID */}
+            {calTab === "calendar" && (() => {
+              const monthNames = [
+                "January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December"
+              ];
+              const firstDayIndex = new Date(calViewYear, calViewMonth, 1).getDay();
+              const daysInMonth = new Date(calViewYear, calViewMonth + 1, 0).getDate();
+
+              const days = [];
+              for (let i = 0; i < firstDayIndex; i++) days.push(null);
+              for (let d = 1; d <= daysInMonth; d++) {
+                const dateStr = `${calViewYear}-${String(calViewMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+                days.push({ dayNum: d, dateStr });
+              }
+
+              // Mapping purchase dates to count
+              const purchaseMap: Record<string, number> = {};
+              cylinders.forEach((c) => {
+                const d = c.purchased_at ? c.purchased_at.slice(0, 10) : c.created_at ? c.created_at.slice(0, 10) : null;
+                if (d) purchaseMap[d] = (purchaseMap[d] || 0) + 1;
+              });
+
+              return (
+                <div className="space-y-3 p-3 rounded-xl border border-border/70 bg-card/60 shadow-xs">
+                  {/* Month Navigation */}
+                  <div className="flex items-center justify-between">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs font-bold px-2"
+                      onClick={() => {
+                        if (calViewMonth === 0) {
+                          setCalViewMonth(11);
+                          setCalViewYear((y) => y - 1);
+                        } else setCalViewMonth((m) => m - 1);
+                      }}
+                    >
+                      ← Prev
+                    </Button>
+
+                    <div className="text-sm font-extrabold font-mono text-foreground flex items-center gap-1.5">
+                      <Calendar className="h-4 w-4 text-primary" />
+                      {monthNames[calViewMonth]} {calViewYear}
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs font-bold px-2"
+                      onClick={() => {
+                        if (calViewMonth === 11) {
+                          setCalViewMonth(0);
+                          setCalViewYear((y) => y + 1);
+                        } else setCalViewMonth((m) => m + 1);
+                      }}
+                    >
+                      Next →
+                    </Button>
+                  </div>
+
+                  {/* Weekday headers */}
+                  <div className="grid grid-cols-7 text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+                  </div>
+
+                  {/* Days grid */}
+                  <div className="grid grid-cols-7 gap-1">
+                    {days.map((item, idx) => {
+                      if (!item) return <div key={`empty-${idx}`} className="h-12 sm:h-14 rounded-lg bg-secondary/10 opacity-30" />;
+                      const { dayNum, dateStr } = item;
+                      const count = purchaseMap[dateStr] || 0;
+                      const isSelected = selectedDates.includes(dateStr);
+                      const isToday = dateStr === new Date().toISOString().slice(0, 10);
+
+                      return (
+                        <button
+                          key={dateStr}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setSelectedDates((prev) => prev.filter((d) => d !== dateStr));
+                            } else {
+                              setSelectedDates((prev) => [...prev, dateStr]);
+                            }
+                          }}
+                          className={cn(
+                            "h-12 sm:h-14 p-1 rounded-lg border flex flex-col justify-between text-left transition-all cursor-pointer relative",
+                            isSelected
+                              ? "bg-primary text-primary-foreground border-primary font-bold shadow-md scale-105 z-10"
+                              : count > 0
+                              ? "bg-amber-500/15 border-amber-500/40 text-amber-400 font-bold hover:bg-amber-500/25"
+                              : "bg-secondary/30 border-border/40 text-foreground hover:bg-secondary"
+                          )}
+                        >
+                          <div className="flex items-center justify-between w-full">
+                            <span className={cn("text-xs font-mono font-bold", isToday && !isSelected && "text-primary underline")}>
+                              {dayNum}
+                            </span>
+                            {isSelected && <CheckCircle2 className="h-3 w-3 text-primary-foreground shrink-0" />}
+                          </div>
+                          {count > 0 && (
+                            <span
+                              className={cn(
+                                "text-[9px] font-mono px-1 rounded font-extrabold self-start truncate max-w-full",
+                                isSelected ? "bg-primary-foreground/20 text-primary-foreground" : "bg-amber-500/20 text-amber-400"
+                              )}
+                            >
+                              📦 {count}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* TAB 2: PRESETS & RANGE */}
+            {calTab === "presets" && (
+              <div className="space-y-4 p-3 rounded-xl border border-border/70 bg-card/60">
+                <div className="space-y-2">
+                  <div className="text-xs font-bold text-foreground">⚡ Quick Presets:</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="text-xs font-bold justify-start"
+                      onClick={() => {
+                        setDateRangeType("all");
+                        setFromDate("");
+                        setToDate("");
+                        setSelectedDates([]);
+                        setMultiDateModalOpen(false);
+                      }}
+                    >
+                      📅 All Time (Any Date)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="text-xs font-bold justify-start"
+                      onClick={() => {
+                        const today = new Date().toISOString().slice(0, 10);
+                        setSelectedDates([today]);
+                        setMultiDateModalOpen(false);
+                      }}
+                    >
+                      ⚡ Purchased Today
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="text-xs font-bold justify-start"
+                      onClick={() => {
+                        const today = new Date().toISOString().slice(0, 10);
+                        const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+                        setFromDate(firstDay);
+                        setToDate(today);
+                        setSelectedDates([]);
+                        setMultiDateModalOpen(false);
+                      }}
+                    >
+                      📅 Purchased This Month
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="text-xs font-bold justify-start"
+                      onClick={() => {
+                        const today = new Date().toISOString().slice(0, 10);
+                        const janFirst = `${new Date().getFullYear()}-01-01`;
+                        setFromDate(janFirst);
+                        setToDate(today);
+                        setSelectedDates([]);
+                        setMultiDateModalOpen(false);
+                      }}
+                    >
+                      🗓️ Purchased This Year
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2 border-t border-border/40 pt-3">
+                  <div className="text-xs font-bold text-foreground">✏️ Date Range (From → To):</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs">From Date</Label>
+                      <Input
+                        type="date"
+                        className="mt-1 h-9 text-xs font-mono"
+                        value={fromDate}
+                        onChange={(e) => {
+                          setFromDate(e.target.value);
+                          setSelectedDates([]);
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">To Date</Label>
+                      <Input
+                        type="date"
+                        className="mt-1 h-9 text-xs font-mono"
+                        value={toDate}
+                        onChange={(e) => {
+                          setToDate(e.target.value);
+                          setSelectedDates([]);
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 3: BATCHES LIST */}
+            {calTab === "batches" && (() => {
               const allDatesMap: Record<string, { count: number; suppliers: string[] }> = {};
               cylinders.forEach((c) => {
                 const d = c.purchased_at ? c.purchased_at.slice(0, 10) : c.created_at ? c.created_at.slice(0, 10) : null;
                 if (!d) return;
-                if (!allDatesMap[d]) {
-                  allDatesMap[d] = { count: 0, suppliers: [] };
-                }
+                if (!allDatesMap[d]) allDatesMap[d] = { count: 0, suppliers: [] };
                 allDatesMap[d].count += 1;
                 const supp = getCylMeta(c).supplier_name;
-                if (supp !== "—" && !allDatesMap[d].suppliers.includes(supp)) {
-                  allDatesMap[d].suppliers.push(supp);
-                }
+                if (supp !== "—" && !allDatesMap[d].suppliers.includes(supp)) allDatesMap[d].suppliers.push(supp);
               });
 
               const sortedDates = Object.keys(allDatesMap).sort((a, b) => b.localeCompare(a));
 
               return (
-                <div className="space-y-2">
+                <div className="space-y-2.5 p-3 rounded-xl border border-border/70 bg-card/60">
                   <div className="flex items-center justify-between text-xs font-bold text-foreground">
                     <span>Available Purchase Dates ({sortedDates.length})</span>
                     <div className="flex gap-2">
@@ -1439,11 +1603,8 @@ export default function MyCylinders() {
                           key={d}
                           type="button"
                           onClick={() => {
-                            if (isSel) {
-                              setSelectedDates((prev) => prev.filter((item) => item !== d));
-                            } else {
-                              setSelectedDates((prev) => [...prev, d]);
-                            }
+                            if (isSel) setSelectedDates((prev) => prev.filter((item) => item !== d));
+                            else setSelectedDates((prev) => [...prev, d]);
                           }}
                           className={cn(
                             "p-2.5 rounded-lg border text-left transition-all cursor-pointer space-y-1",
@@ -1468,11 +1629,44 @@ export default function MyCylinders() {
               );
             })()}
 
+            {/* Selected Dates Summary Badges */}
+            {selectedDates.length > 0 && (
+              <div className="p-3 rounded-lg bg-primary/10 border border-primary/20 space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-foreground">
+                  <span>Selected Dates ({selectedDates.length}):</span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDates([])}
+                    className="text-[10px] text-rose-400 hover:underline font-bold cursor-pointer"
+                  >
+                    Clear All
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                  {selectedDates.map((d) => (
+                    <span
+                      key={d}
+                      className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-primary/20 text-primary border border-primary/40 flex items-center gap-1"
+                    >
+                      📅 {new Date(d).toLocaleDateString("en-IN")}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDates((prev) => prev.filter((item) => item !== d))}
+                        className="hover:text-rose-400 font-bold ml-1 cursor-pointer"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <Button
               onClick={() => setMultiDateModalOpen(false)}
-              className="w-full h-10 font-bold text-xs uppercase tracking-wider"
+              className="w-full h-11 font-bold text-xs uppercase tracking-wider gap-2 text-white bg-primary hover:bg-primary/90 shadow-md"
             >
-              Apply Filter ({selectedDates.length} Date(s) Selected)
+              APPLY FILTER ({selectedDates.length > 0 ? `${selectedDates.length} DATE(S)` : "ALL DATES"})
             </Button>
           </div>
         </DialogContent>
