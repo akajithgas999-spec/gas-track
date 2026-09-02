@@ -194,7 +194,7 @@ export default function Invoices() {
 
   const loadCylinders = async () => {
     const { data } = await (supabase.from("cylinders") as any)
-      .select("id, cylinder_number, serial_number, type_id, status, current_customer_id, fill_status, cylinder_types(code, name)")
+      .select("id, cylinder_number, serial_number, type_id, status, current_customer_id, fill_status, cylinder_types(code, name), customers(id, name, customer_number)")
       .order("cylinder_number", { ascending: true, nullsFirst: false });
     const all = data ?? [];
     setStockCylinders(all.filter((c: any) => c.status === "in_stock"));
@@ -788,6 +788,15 @@ export default function Invoices() {
                           {(() => {
                             const availIssued = issuedCylinders.filter((c) => !l.type_id || c.type_id === l.type_id);
                             const currentReturned = parseCylNums(l.returned_numbers);
+                            const selectedCust = customers.find((cust: any) => cust.id === form.customer_id);
+
+                            const custIssued = form.customer_id
+                              ? availIssued.filter((c) => c.current_customer_id === form.customer_id)
+                              : [];
+                            const otherIssued = form.customer_id
+                              ? availIssued.filter((c) => c.current_customer_id !== form.customer_id)
+                              : availIssued;
+
                             return (
                               <>
                                 <div className="flex items-center justify-between mb-1">
@@ -809,35 +818,81 @@ export default function Invoices() {
                                 />
 
                                 {/* Quick-select Badges for Issued Cylinders to return */}
-                                {availIssued.length > 0 && (
-                                  <div className="mt-1.5 space-y-1">
-                                    <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">
-                                      Click to mark issued cylinder as returned:
+                                <div className="mt-1.5 space-y-2">
+                                  {form.customer_id && selectedCust ? (
+                                    <div className="space-y-1">
+                                      <div className="text-[10px] font-bold text-amber-400 flex items-center justify-between bg-amber-500/10 px-2 py-1 rounded border border-amber-500/20">
+                                        <span>👤 Cylinders with {selectedCust.name}:</span>
+                                        <span className="text-[9px] bg-amber-500/20 px-1.5 py-0.5 rounded font-mono">{custIssued.length} held</span>
+                                      </div>
+
+                                      {custIssued.length > 0 ? (
+                                        <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5">
+                                          {custIssued.map((c) => {
+                                            const cylId = getCylId(c);
+                                            const isSelected = currentReturned.includes(cylId);
+                                            return (
+                                              <button
+                                                key={c.id}
+                                                type="button"
+                                                onClick={() => toggleCylinderInLine(i, "returned_numbers", cylId)}
+                                                className={cn(
+                                                  "px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-all cursor-pointer",
+                                                  isSelected
+                                                    ? "bg-amber-500 text-black border-amber-400 font-extrabold shadow-sm scale-105"
+                                                    : "bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30"
+                                                )}
+                                                title={`Held by ${selectedCust.name}`}
+                                              >
+                                                #{c.cylinder_number ?? c.serial_number} {isSelected ? "✓ Returned" : ""}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      ) : (
+                                        <div className="text-[10px] text-muted-foreground italic px-1">
+                                          No active cylinders held by {selectedCust.name}.
+                                        </div>
+                                      )}
                                     </div>
-                                    <div className="flex flex-wrap gap-1 max-h-28 overflow-y-auto p-1.5 rounded-lg border border-border/40 bg-secondary/20">
-                                      {availIssued.map((c) => {
-                                        const cylId = getCylId(c);
-                                        const isSelected = currentReturned.includes(cylId);
-                                        return (
-                                          <button
-                                            key={c.id}
-                                            type="button"
-                                            onClick={() => toggleCylinderInLine(i, "returned_numbers", cylId)}
-                                            className={cn(
-                                              "px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-all cursor-pointer",
-                                              isSelected
-                                                ? "bg-amber-500/25 text-amber-400 border-amber-500/60 shadow-sm scale-105"
-                                                : "bg-secondary/60 text-foreground border-border/50 hover:bg-amber-500/10 hover:border-amber-500/30"
-                                            )}
-                                            title={`Serial: ${c.serial_number}`}
-                                          >
-                                            #{c.cylinder_number ?? c.serial_number} {isSelected ? "✓ Returned" : ""}
-                                          </button>
-                                        );
-                                      })}
+                                  ) : (
+                                    <div className="text-[10px] text-amber-400/90 font-medium bg-amber-500/10 p-1.5 rounded border border-amber-500/20">
+                                      💡 Select a customer at the top to filter cylinders held by that customer.
                                     </div>
-                                  </div>
-                                )}
+                                  )}
+
+                                  {/* All other issued cylinders section */}
+                                  {otherIssued.length > 0 && (
+                                    <div className="space-y-1 pt-1 border-t border-border/30">
+                                      <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">
+                                        {form.customer_id ? `Other issued cylinders (${otherIssued.length}):` : `All issued cylinders (${otherIssued.length}):`}
+                                      </div>
+                                      <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto p-1.5 rounded-lg border border-border/40 bg-secondary/20">
+                                        {otherIssued.map((c) => {
+                                          const cylId = getCylId(c);
+                                          const isSelected = currentReturned.includes(cylId);
+                                          const custName = c.customers?.name;
+                                          return (
+                                            <button
+                                              key={c.id}
+                                              type="button"
+                                              onClick={() => toggleCylinderInLine(i, "returned_numbers", cylId)}
+                                              className={cn(
+                                                "px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-all cursor-pointer",
+                                                isSelected
+                                                  ? "bg-amber-500/25 text-amber-400 border-amber-500/60 shadow-sm scale-105"
+                                                  : "bg-secondary/60 text-muted-foreground border-border/50 hover:bg-secondary hover:text-foreground"
+                                              )}
+                                              title={custName ? `Held by ${custName}` : "Issued cylinder"}
+                                            >
+                                              #{c.cylinder_number ?? c.serial_number} {custName ? `(${custName})` : ""} {isSelected ? "✓" : ""}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
 
                                 {currentReturned.length > 0 && (
                                   <div className="flex flex-wrap gap-1 mt-1.5">
