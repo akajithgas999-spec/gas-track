@@ -817,17 +817,22 @@ export default function Invoices() {
                                   placeholder="Select below or type e.g. 3, 4"
                                 />
 
-                                {/* Quick-select Badges for Issued Cylinders to return */}
-                                <div className="mt-1.5 space-y-2">
-                                  {form.customer_id && selectedCust ? (
-                                    <div className="space-y-1">
-                                      <div className="text-[10px] font-bold text-amber-400 flex items-center justify-between bg-amber-500/10 px-2 py-1 rounded border border-amber-500/20">
-                                        <span>👤 Cylinders with {selectedCust.name}:</span>
-                                        <span className="text-[9px] bg-amber-500/20 px-1.5 py-0.5 rounded font-mono">{custIssued.length} held</span>
-                                      </div>
+                                {/* 2 SEPARATE DISTINCT CONTAINERS FOR RETURNED CYLINDERS */}
+                                <div className="mt-2 space-y-2.5">
+                                  {/* CONTAINER 1: CUSTOMER BASED CYLINDERS */}
+                                  <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-2.5 space-y-1.5">
+                                    <div className="flex items-center justify-between text-[10px] font-bold text-amber-400">
+                                      <span className="flex items-center gap-1">
+                                        👤 {selectedCust ? `Cylinders with ${selectedCust.name}` : "Customer's Issued Cylinders"}
+                                      </span>
+                                      <span className="bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-mono text-[9px]">
+                                        {custIssued.length} held
+                                      </span>
+                                    </div>
 
-                                      {custIssued.length > 0 ? (
-                                        <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5">
+                                    {form.customer_id && selectedCust ? (
+                                      custIssued.length > 0 ? (
+                                        <div className="flex flex-wrap gap-1 max-h-28 overflow-y-auto p-1.5 rounded-md bg-amber-500/10 border border-amber-500/20">
                                           {custIssued.map((c) => {
                                             const cylId = getCylId(c);
                                             const isSelected = currentReturned.includes(cylId);
@@ -850,25 +855,29 @@ export default function Invoices() {
                                           })}
                                         </div>
                                       ) : (
-                                        <div className="text-[10px] text-muted-foreground italic px-1">
+                                        <div className="text-[10px] text-muted-foreground italic px-1 py-0.5">
                                           No active cylinders held by {selectedCust.name}.
                                         </div>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <div className="text-[10px] text-amber-400/90 font-medium bg-amber-500/10 p-1.5 rounded border border-amber-500/20">
-                                      💡 Select a customer at the top to filter cylinders held by that customer.
-                                    </div>
-                                  )}
-
-                                  {/* All other issued cylinders section */}
-                                  {otherIssued.length > 0 && (
-                                    <div className="space-y-1 pt-1 border-t border-border/30">
-                                      <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">
-                                        {form.customer_id ? `Other issued cylinders (${otherIssued.length}):` : `All issued cylinders (${otherIssued.length}):`}
+                                      )
+                                    ) : (
+                                      <div className="text-[10px] text-muted-foreground px-1 py-0.5">
+                                        💡 Select a customer at the top to view cylinders held by that customer.
                                       </div>
-                                      <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto p-1.5 rounded-lg border border-border/40 bg-secondary/20">
-                                        {otherIssued.map((c) => {
+                                    )}
+                                  </div>
+
+                                  {/* CONTAINER 2: ALL ISSUED CYLINDERS */}
+                                  <div className="rounded-lg border border-border/60 bg-secondary/30 p-2.5 space-y-1.5">
+                                    <div className="flex items-center justify-between text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                      <span>🌐 All Issued Cylinders</span>
+                                      <span className="bg-secondary px-1.5 py-0.5 rounded font-mono text-[9px] text-foreground">
+                                        {availIssued.length} total
+                                      </span>
+                                    </div>
+
+                                    {availIssued.length > 0 ? (
+                                      <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1.5 rounded-md bg-background/50 border border-border/40">
+                                        {availIssued.map((c) => {
                                           const cylId = getCylId(c);
                                           const isSelected = currentReturned.includes(cylId);
                                           const custName = c.customers?.name;
@@ -881,7 +890,7 @@ export default function Invoices() {
                                                 "px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-all cursor-pointer",
                                                 isSelected
                                                   ? "bg-amber-500/25 text-amber-400 border-amber-500/60 shadow-sm scale-105"
-                                                  : "bg-secondary/60 text-muted-foreground border-border/50 hover:bg-secondary hover:text-foreground"
+                                                  : "bg-secondary/70 text-foreground border-border/50 hover:bg-secondary"
                                               )}
                                               title={custName ? `Held by ${custName}` : "Issued cylinder"}
                                             >
@@ -890,8 +899,12 @@ export default function Invoices() {
                                           );
                                         })}
                                       </div>
-                                    </div>
-                                  )}
+                                    ) : (
+                                      <div className="text-[10px] text-muted-foreground italic px-1 py-0.5">
+                                        No issued cylinders in system.
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
 
                                 {currentReturned.length > 0 && (
