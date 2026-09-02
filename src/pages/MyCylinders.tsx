@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCompany } from "@/hooks/useCompany";
 import { Card, CardContent } from "@/components/ui/card";
@@ -224,19 +224,35 @@ export default function MyCylinders() {
   });
 
   const loadData = async () => {
-    setLoading(true);
-    const [cylRes, typeRes, custRes] = await Promise.all([
-      (supabase.from("cylinders") as any)
-        .select("*, cylinder_types(code, name, price), customers(id, name, phone, customer_number)")
-        .order("created_at", { ascending: false }),
-      supabase.from("cylinder_types").select("*").order("name"),
-      supabase.from("customers").select("*").order("name"),
-    ]);
+    try {
+      setLoading(true);
+      const [cylRes, typeRes, custRes] = await Promise.all([
+        (supabase.from("cylinders") as any)
+          .select("*, cylinder_types(code, name, price)")
+          .order("created_at", { ascending: false }),
+        supabase.from("cylinder_types").select("*").order("name"),
+        supabase.from("customers").select("*").order("name"),
+      ]);
 
-    setCylinders(cylRes.data ?? []);
-    setTypes(typeRes.data ?? []);
-    setCustomers(custRes.data ?? []);
-    setLoading(false);
+      if (cylRes.error) {
+        console.error("Cylinders fetch error:", cylRes.error);
+      }
+
+      const custMap = new Map((custRes.data ?? []).map((c: any) => [c.id, c]));
+      const processedCyls = (cylRes.data ?? []).map((c: any) => ({
+        ...c,
+        customers: c.customers || (c.current_customer_id ? custMap.get(c.current_customer_id) : null),
+      }));
+
+      setCylinders(processedCyls);
+      setTypes(typeRes.data ?? []);
+      setCustomers(custRes.data ?? []);
+    } catch (err: any) {
+      console.error("Load data crash:", err);
+      toast.error("Failed to load cylinders: " + (err?.message || "Unknown error"));
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -483,6 +499,16 @@ export default function MyCylinders() {
 
     return matchesSearch && matchesStatus && matchesType && matchesFill && matchesDate;
   });
+
+  if (loading) {
+    return (
+      <div className="p-8 flex flex-col items-center justify-center min-h-[60vh] space-y-3">
+        <Database className="h-10 w-10 text-primary animate-bounce" />
+        <div className="text-sm font-extrabold text-foreground">Loading Cylinder Inventory...</div>
+        <div className="text-xs text-muted-foreground">Fetching records and database assets</div>
+      </div>
+    );
+  }
 
   // ── STAT COUNTS ──
   const totalCount = cylinders.length;
