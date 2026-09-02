@@ -122,6 +122,22 @@ function buildNotesWithMeta(cleanNotes: string, meta: any) {
   return cleanNotes ? `${cleanNotes}\n${jsonStr}` : jsonStr;
 }
 
+function formatDateDisplay(dateStr: string | null | undefined) {
+  if (!dateStr) return "—";
+  const cleanStr = String(dateStr).slice(0, 10);
+  const parts = cleanStr.split("-");
+  if (parts.length === 3 && parts[0].length === 4) {
+    const [yyyy, mm, dd] = parts;
+    return `${dd}/${mm}/${yyyy}`;
+  }
+  try {
+    const d = new Date(dateStr);
+    return isNaN(d.getTime()) ? cleanStr : d.toLocaleDateString("en-IN");
+  } catch (e) {
+    return cleanStr;
+  }
+}
+
 export default function MyCylinders() {
   const { company } = useCompany();
   const [cylinders, setCylinders] = useState<any[]>([]);
@@ -597,7 +613,7 @@ export default function MyCylinders() {
                   key={d}
                   className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-primary/15 text-primary border border-primary/30 flex items-center gap-1"
                 >
-                  📅 {new Date(d).toLocaleDateString("en-IN")}
+                  📅 {formatDateDisplay(d)}
                   <button
                     type="button"
                     onClick={() => setSelectedDates((prev) => prev.filter((item) => item !== d))}
@@ -661,7 +677,7 @@ export default function MyCylinders() {
                 const m = getCylMeta(c);
                 const isSold = c.status === "retired" || m.sold_at != null;
                 const isDamaged = m.is_damaged || c.status === "damaged" || c.status === "maintenance";
-                const purDateStr = c.purchased_at ? new Date(c.purchased_at).toLocaleDateString("en-IN") : "—";
+                const purDateStr = formatDateDisplay(c.purchased_at);
 
                 return (
                   <tr key={c.id} className="hover:bg-secondary/30 transition-colors">
@@ -1180,7 +1196,7 @@ export default function MyCylinders() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-primary pr-6">
               <Calendar className="h-5 w-5 shrink-0" />
-              Purchase Batch Report — {viewDateModalDate ? new Date(viewDateModalDate).toLocaleDateString("en-IN") : ""}
+              Purchase Batch Report — {viewDateModalDate ? formatDateDisplay(viewDateModalDate) : ""}
             </DialogTitle>
           </DialogHeader>
 
@@ -1614,7 +1630,7 @@ export default function MyCylinders() {
                           )}
                         >
                           <div className="flex items-center justify-between text-xs font-bold font-mono">
-                            <span>📅 {new Date(d).toLocaleDateString("en-IN")}</span>
+                            <span>📅 {formatDateDisplay(d)}</span>
                             {isSel && <span className="text-primary text-[10px] font-bold">✓ Selected</span>}
                           </div>
                           <div className="text-[10px] text-muted-foreground flex justify-between items-center">
@@ -1648,7 +1664,7 @@ export default function MyCylinders() {
                       key={d}
                       className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-primary/20 text-primary border border-primary/40 flex items-center gap-1"
                     >
-                      📅 {new Date(d).toLocaleDateString("en-IN")}
+                      📅 {formatDateDisplay(d)}
                       <button
                         type="button"
                         onClick={() => setSelectedDates((prev) => prev.filter((item) => item !== d))}
