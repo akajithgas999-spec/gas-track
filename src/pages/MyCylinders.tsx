@@ -1458,9 +1458,40 @@ function MyCylindersContent() {
                       ← Prev
                     </Button>
 
-                    <div className="text-sm font-extrabold font-mono text-foreground flex items-center gap-1.5">
-                      <Calendar className="h-4 w-4 text-primary" />
-                      {monthNames[calViewMonth]} {calViewYear}
+                    <div className="flex items-center gap-1.5">
+                      {/* Month Dropdown */}
+                      <Select
+                        value={String(calViewMonth)}
+                        onValueChange={(val) => setCalViewMonth(Number(val))}
+                      >
+                        <SelectTrigger className="h-7 text-xs font-bold w-[120px] bg-background">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {monthNames.map((name, index) => (
+                            <SelectItem key={name} value={String(index)} className="text-xs font-bold">
+                              {name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      {/* Year Dropdown */}
+                      <Select
+                        value={String(calViewYear)}
+                        onValueChange={(val) => setCalViewYear(Number(val))}
+                      >
+                        <SelectTrigger className="h-7 text-xs font-bold w-[90px] font-mono bg-background">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from({ length: 20 }, (_, i) => 2020 + i).map((yr) => (
+                            <SelectItem key={yr} value={String(yr)} className="text-xs font-bold font-mono">
+                              {yr}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
 
                     <Button
