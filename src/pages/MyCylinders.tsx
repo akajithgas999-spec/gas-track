@@ -89,7 +89,35 @@ function parseBatchCylinderNumbers(input: string): string[] {
   return Array.from(result).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
 }
 
+function safeSlice10(val: any): string {
+  if (!val) return "";
+  if (typeof val === "string") return val.slice(0, 10);
+  try {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+  } catch (e) {
+    return "";
+  }
+}
+
 function getCylMeta(c: any) {
+  if (!c) {
+    return {
+      supplier_name: "—",
+      batch_number: "—",
+      manufacture_year: "—",
+      is_damaged: false,
+      damage_notes: "",
+      sold_at: null,
+      sold_to_customer_id: null,
+      sold_to_name: "—",
+      sold_price: 0,
+      sold_notes: "",
+      clean_notes: "",
+      meta: {},
+    };
+  }
+
   let meta: any = {};
   if (c.notes && typeof c.notes === "string" && c.notes.includes("__CYL_META__:")) {
     try {
@@ -101,11 +129,14 @@ function getCylMeta(c: any) {
     ? c.notes.split("__CYL_META__:")[0].trim()
     : c.notes ?? "";
 
+  const purDate = safeSlice10(c.purchased_at);
+  const purYear = purDate ? purDate.slice(0, 4) : "—";
+
   return {
     supplier_name: c.supplier_name ?? meta.supplier_name ?? "—",
     batch_number: c.batch_number ?? meta.batch_number ?? "—",
-    manufacture_year: c.manufacture_year ?? meta.manufacture_year ?? (c.purchased_at ? new Date(c.purchased_at).getFullYear() : "—"),
-    is_damaged: c.is_damaged ?? meta.is_damaged ?? c.status === "damaged" ?? c.status === "maintenance",
+    manufacture_year: c.manufacture_year ?? meta.manufacture_year ?? purYear,
+    is_damaged: Boolean(c.is_damaged ?? meta.is_damaged ?? (c.status === "damaged" || c.status === "maintenance")),
     damage_notes: c.damage_notes ?? meta.damage_notes ?? "",
     sold_at: c.sold_at ?? meta.sold_at ?? null,
     sold_to_customer_id: c.sold_to_customer_id ?? meta.sold_to_customer_id ?? null,
@@ -138,7 +169,7 @@ function formatDateDisplay(dateStr: string | null | undefined) {
   }
 }
 
-export default function MyCylinders() {
+function MyCylindersContent() {
   const { company } = useCompany();
   const [cylinders, setCylinders] = useState<any[]>([]);
   const [types, setTypes] = useState<any[]>([]);
@@ -487,7 +518,7 @@ export default function MyCylinders() {
     let matchesFill = fillFilter === "all" || c.fill_status === fillFilter;
 
     // Purchased Date Filter
-    const cylDate = c.purchased_at ? c.purchased_at.slice(0, 10) : c.created_at ? c.created_at.slice(0, 10) : "";
+    const cylDate = safeSlice10(c.purchased_at) || safeSlice10(c.created_at);
     let matchesDate = true;
 
     if (selectedDates.length > 0) {
@@ -725,7 +756,7 @@ export default function MyCylinders() {
                       {c.purchased_at ? (
                         <button
                           type="button"
-                          onClick={() => setViewDateModalDate(c.purchased_at.slice(0, 10))}
+                          onClick={() => setViewDateModalDate(safeSlice10(c.purchased_at))}
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 hover:border-primary/50 transition-all cursor-pointer group"
                           title="Click to view all cylinders purchased on this date"
                         >
@@ -1228,7 +1259,7 @@ export default function MyCylinders() {
 
           {viewDateModalDate && (() => {
             const dateCyls = cylinders.filter(
-              (c) => (c.purchased_at ? c.purchased_at.slice(0, 10) : c.created_at ? c.created_at.slice(0, 10) : "") === viewDateModalDate
+              (c) => (safeSlice10(c.purchased_at) || safeSlice10(c.created_at)) === viewDateModalDate
             );
 
             // Compute type breakdown
@@ -1396,7 +1427,7 @@ export default function MyCylinders() {
               // Mapping purchase dates to count
               const purchaseMap: Record<string, number> = {};
               cylinders.forEach((c) => {
-                const d = c.purchased_at ? c.purchased_at.slice(0, 10) : c.created_at ? c.created_at.slice(0, 10) : null;
+                const d = safeSlice10(c.purchased_at) || safeSlice10(c.created_at);
                 if (d) purchaseMap[d] = (purchaseMap[d] || 0) + 1;
               });
 
@@ -1603,7 +1634,7 @@ export default function MyCylinders() {
             {calTab === "batches" && (() => {
               const allDatesMap: Record<string, { count: number; suppliers: string[] }> = {};
               cylinders.forEach((c) => {
-                const d = c.purchased_at ? c.purchased_at.slice(0, 10) : c.created_at ? c.created_at.slice(0, 10) : null;
+                const d = safeSlice10(c.purchased_at) || safeSlice10(c.created_at);
                 if (!d) return;
                 if (!allDatesMap[d]) allDatesMap[d] = { count: 0, suppliers: [] };
                 allDatesMap[d].count += 1;
@@ -1714,5 +1745,56 @@ export default function MyCylinders() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+class CylinderErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: any }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("Cylinder page error caught by boundary:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 flex flex-col items-center justify-center min-h-[60vh] space-y-4 text-center max-w-lg mx-auto">
+          <AlertTriangle className="h-12 w-12 text-amber-500 animate-bounce" />
+          <h2 className="text-lg font-bold text-foreground">Cylinder Inventory Error</h2>
+          <p className="text-xs text-muted-foreground font-mono bg-secondary/50 p-3 rounded border border-border/60 text-left w-full overflow-x-auto">
+            {this.state.error?.message || "An unexpected error occurred."}
+          </p>
+          <Button
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+              window.location.reload();
+            }}
+            className="font-bold text-xs gap-2 shadow-md"
+          >
+            🔄 Reload Inventory Page
+          </Button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+export default function MyCylinders() {
+  return (
+    <CylinderErrorBoundary>
+      <MyCylindersContent />
+    </CylinderErrorBoundary>
   );
 }
