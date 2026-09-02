@@ -637,7 +637,6 @@ export default function MyCylinders() {
                 <th className="text-left px-4 py-3">Supplier / Vendor</th>
                 <th className="text-left px-4 py-3">Batch # / Bill</th>
                 <th className="text-left px-4 py-3">Year</th>
-                <th className="text-left px-4 py-3">Fill Status</th>
                 <th className="text-left px-4 py-3">Location / Holder</th>
                 <th className="text-right px-4 py-3">Actions</th>
               </tr>
@@ -648,7 +647,6 @@ export default function MyCylinders() {
                 const isSold = c.status === "retired" || m.sold_at != null;
                 const isDamaged = m.is_damaged || c.status === "damaged" || c.status === "maintenance";
                 const purDateStr = c.purchased_at ? new Date(c.purchased_at).toLocaleDateString("en-IN") : "—";
-                const isFilled = (c.fill_status || "filled") === "filled";
 
                 return (
                   <tr key={c.id} className="hover:bg-secondary/30 transition-colors">
@@ -691,24 +689,6 @@ export default function MyCylinders() {
                     {/* Year */}
                     <td className="px-4 py-3 font-mono text-muted-foreground">
                       {m.manufacture_year}
-                    </td>
-
-                    {/* Fill Status Toggle */}
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => toggleFillStatus(c)}
-                        className={cn(
-                          "px-2 py-0.5 rounded text-[10px] font-bold border transition-all flex items-center gap-1 cursor-pointer",
-                          isFilled
-                            ? "bg-amber-500/15 text-amber-400 border-amber-500/30 hover:bg-amber-500/25"
-                            : "bg-secondary text-muted-foreground border-border/60 hover:bg-secondary/80"
-                        )}
-                        title="Click to toggle Fill/Empty status"
-                      >
-                        {isFilled ? <Flame className="h-3 w-3 fill-amber-400 text-amber-400" /> : <Circle className="h-3 w-3" />}
-                        {isFilled ? "Filled" : "Empty"}
-                      </button>
                     </td>
 
                     {/* Current Status / Customer / Sold info */}
@@ -865,29 +845,16 @@ export default function MyCylinders() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">Gas / Cylinder Type *</Label>
-                <Select value={addForm.type_id} onValueChange={(v) => setAddForm({ ...addForm, type_id: v })}>
-                  <SelectTrigger className="mt-1 h-9 text-xs"><SelectValue placeholder="Select type" /></SelectTrigger>
-                  <SelectContent>
-                    {types.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>{t.code} — {t.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label className="text-xs">Initial Fill Status</Label>
-                <Select value={addForm.fill_status} onValueChange={(v) => setAddForm({ ...addForm, fill_status: v })}>
-                  <SelectTrigger className="mt-1 h-9 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="filled">🔥 Filled</SelectItem>
-                    <SelectItem value="empty">⚪ Empty</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <div>
+              <Label className="text-xs">Gas / Cylinder Type *</Label>
+              <Select value={addForm.type_id} onValueChange={(v) => setAddForm({ ...addForm, type_id: v })}>
+                <SelectTrigger className="mt-1 h-9 text-xs"><SelectValue placeholder="Select type" /></SelectTrigger>
+                <SelectContent>
+                  {types.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>{t.code} — {t.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div>
