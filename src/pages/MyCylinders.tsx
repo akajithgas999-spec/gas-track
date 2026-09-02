@@ -140,6 +140,14 @@ export default function MyCylinders() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
+  // Clicked Purchase Date Details Modal state
+  const [viewDateModalDate, setViewDateModalDate] = useState<string | null>(null);
+
+  // Multi-Date Selection Filter state
+  const [selectedDates, setSelectedDates] = useState<string[]>([]);
+  const [multiDateModalOpen, setMultiDateModalOpen] = useState(false);
+  const [customMultiDate, setCustomMultiDate] = useState("");
+
   // Modals state
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [sellModalCyl, setSellModalCyl] = useState<any | null>(null);
@@ -450,8 +458,13 @@ export default function MyCylinders() {
     // Purchased Date Filter
     const cylDate = c.purchased_at ? c.purchased_at.slice(0, 10) : c.created_at ? c.created_at.slice(0, 10) : "";
     let matchesDate = true;
-    if (fromDate && cylDate) matchesDate = cylDate >= fromDate;
-    if (toDate && cylDate && matchesDate) matchesDate = cylDate <= toDate;
+
+    if (selectedDates.length > 0) {
+      matchesDate = selectedDates.includes(cylDate);
+    } else {
+      if (fromDate && cylDate) matchesDate = cylDate >= fromDate;
+      if (toDate && cylDate && matchesDate) matchesDate = cylDate <= toDate;
+    }
 
     return matchesSearch && matchesStatus && matchesType && matchesFill && matchesDate;
   });
@@ -610,7 +623,7 @@ export default function MyCylinders() {
           </div>
 
           {/* To Date Input */}
-          <div className="sm:col-span-1">
+          <div className="sm:col-span-1 flex gap-1">
             <Input
               type="date"
               value={toDate}
@@ -619,12 +632,55 @@ export default function MyCylinders() {
                 setDateRangeType("custom");
               }}
               title="To Purchased Date"
-              className="h-9 text-xs font-mono"
+              className="h-9 text-xs font-mono flex-1"
             />
+            <Button
+              type="button"
+              variant={selectedDates.length > 0 ? "default" : "outline"}
+              size="sm"
+              onClick={() => setMultiDateModalOpen(true)}
+              className="h-9 px-2 text-xs font-bold shrink-0 gap-1"
+              title="Select specific multiple dates (e.g. 5th, 10th)"
+            >
+              <Calendar className="h-3.5 w-3.5" />
+              {selectedDates.length > 0 ? `(${selectedDates.length})` : "Multi"}
+            </Button>
           </div>
         </div>
 
-        {(fromDate || toDate) && (
+        {/* Selected Dates Active Banner */}
+        {selectedDates.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs pt-2 border-t border-border/40">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-muted-foreground font-medium">Showing {filteredCylinders.length} cylinders for {selectedDates.length} selected date(s):</span>
+              {selectedDates.map((d) => (
+                <span
+                  key={d}
+                  className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-primary/15 text-primary border border-primary/30 flex items-center gap-1"
+                >
+                  📅 {new Date(d).toLocaleDateString("en-IN")}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDates((prev) => prev.filter((item) => item !== d))}
+                    className="hover:text-rose-400 font-bold ml-1 cursor-pointer"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-[10px] text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 font-bold"
+              onClick={() => setSelectedDates([])}
+            >
+              Clear Date Selection ✕
+            </Button>
+          </div>
+        )}
+
+        {selectedDates.length === 0 && (fromDate || toDate) && (
           <div className="flex items-center justify-between text-xs pt-2 border-t border-border/40 text-muted-foreground">
             <span>
               Showing cylinders purchased from <strong className="text-primary font-mono">{fromDate || "beginning"}</strong> to <strong className="text-primary font-mono">{toDate || "today"}</strong>
@@ -684,8 +740,20 @@ export default function MyCylinders() {
                     </td>
 
                     {/* Purchased Date */}
-                    <td className="px-4 py-3 font-mono text-muted-foreground">
-                      {purDateStr}
+                    <td className="px-4 py-3 font-mono">
+                      {c.purchased_at ? (
+                        <button
+                          type="button"
+                          onClick={() => setViewDateModalDate(c.purchased_at.slice(0, 10))}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 hover:border-primary/50 transition-all cursor-pointer group"
+                          title="Click to view all cylinders purchased on this date"
+                        >
+                          <Calendar className="h-3 w-3 text-primary group-hover:scale-110 transition-transform" />
+                          {purDateStr}
+                        </button>
+                      ) : (
+                        <span className="text-muted-foreground italic">—</span>
+                      )}
                     </td>
 
                     {/* Supplier / Company */}
@@ -1164,6 +1232,249 @@ export default function MyCylinders() {
               </Button>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── MODAL: PURCHASE DATE BATCH DETAILS REPORT ── */}
+      <Dialog open={!!viewDateModalDate} onOpenChange={(v) => !v && setViewDateModalDate(null)}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-primary pr-6">
+              <Calendar className="h-5 w-5 shrink-0" />
+              Purchase Batch Report — {viewDateModalDate ? new Date(viewDateModalDate).toLocaleDateString("en-IN") : ""}
+            </DialogTitle>
+          </DialogHeader>
+
+          {viewDateModalDate && (() => {
+            const dateCyls = cylinders.filter(
+              (c) => (c.purchased_at ? c.purchased_at.slice(0, 10) : c.created_at ? c.created_at.slice(0, 10) : "") === viewDateModalDate
+            );
+
+            // Compute type breakdown
+            const typeCounts: Record<string, number> = {};
+            dateCyls.forEach((c) => {
+              const code = c.cylinder_types?.code || "Unknown";
+              typeCounts[code] = (typeCounts[code] || 0) + 1;
+            });
+
+            const uniqueSuppliers = Array.from(new Set(dateCyls.map((c) => getCylMeta(c).supplier_name).filter((s) => s !== "—")));
+            const uniqueBills = Array.from(new Set(dateCyls.map((c) => getCylMeta(c).batch_number).filter((b) => b !== "—")));
+
+            return (
+              <div className="space-y-4 pt-1">
+                {/* Stats Header */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="p-3 rounded-lg bg-primary/10 border border-primary/20 space-y-0.5">
+                    <div className="text-[10px] uppercase font-bold text-muted-foreground">Total Purchased</div>
+                    <div className="text-xl font-black font-mono text-primary">{dateCyls.length} Cylinders</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-secondary/50 border border-border/60 space-y-0.5">
+                    <div className="text-[10px] uppercase font-bold text-muted-foreground">Supplier / Vendor</div>
+                    <div className="text-sm font-bold text-foreground truncate">
+                      {uniqueSuppliers.length > 0 ? uniqueSuppliers.join(", ") : "—"}
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-secondary/50 border border-border/60 space-y-0.5">
+                    <div className="text-[10px] uppercase font-bold text-muted-foreground">Bill Number(s)</div>
+                    <div className="text-sm font-bold font-mono text-foreground truncate">
+                      {uniqueBills.length > 0 ? uniqueBills.join(", ") : "—"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Gas Type Breakdown */}
+                <div className="p-3 rounded-lg border border-border/60 bg-secondary/20 space-y-2">
+                  <div className="text-xs font-bold text-foreground">🧪 Gas Types Breakdown:</div>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(typeCounts).map(([code, cnt]) => (
+                      <span key={code} className="px-2.5 py-1 rounded text-xs font-mono font-bold bg-primary/15 text-primary border border-primary/30">
+                        {code}: {cnt} cylinder(s)
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Cylinders List Table */}
+                <div className="rounded-lg border border-border/60 overflow-hidden">
+                  <div className="max-h-60 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-secondary/70 text-[10px] uppercase font-bold text-muted-foreground border-b border-border/60 sticky top-0">
+                        <tr>
+                          <th className="text-left px-3 py-2">Cylinder #</th>
+                          <th className="text-left px-3 py-2">Serial #</th>
+                          <th className="text-left px-3 py-2">Gas Type</th>
+                          <th className="text-left px-3 py-2">Bill Number</th>
+                          <th className="text-left px-3 py-2">Location / Holder</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/40 font-mono">
+                        {dateCyls.map((c) => {
+                          const m = getCylMeta(c);
+                          const isSold = c.status === "retired" || m.sold_at != null;
+                          const isDamaged = m.is_damaged || c.status === "damaged" || c.status === "maintenance";
+                          return (
+                            <tr key={c.id} className="hover:bg-secondary/30">
+                              <td className="px-3 py-2 font-bold text-primary">#{c.cylinder_number ?? c.serial_number}</td>
+                              <td className="px-3 py-2 text-muted-foreground">{c.serial_number}</td>
+                              <td className="px-3 py-2 font-bold">{c.cylinder_types?.code ?? "—"}</td>
+                              <td className="px-3 py-2">{m.batch_number}</td>
+                              <td className="px-3 py-2 font-sans">
+                                {isSold ? (
+                                  <span className="text-purple-400 font-bold">💰 Sold ({m.sold_to_name})</span>
+                                ) : isDamaged ? (
+                                  <span className="text-rose-400 font-bold">⚠️ Damaged</span>
+                                ) : c.customers ? (
+                                  <span className="text-amber-400 font-medium">👤 {c.customers.name}</span>
+                                ) : (
+                                  <span className="text-emerald-400 font-medium">📦 Warehouse</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <Button
+                  onClick={() => {
+                    setSelectedDates([viewDateModalDate]);
+                    setViewDateModalDate(null);
+                  }}
+                  className="w-full h-9 font-bold text-xs gap-1.5"
+                >
+                  <Filter className="h-4 w-4" /> Filter Inventory Table by This Date Only ({dateCyls.length} cylinders)
+                </Button>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── MODAL: MULTI-DATE CALENDAR SELECTION ── */}
+      <Dialog open={multiDateModalOpen} onOpenChange={setMultiDateModalOpen}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-primary pr-6">
+              <Calendar className="h-5 w-5 shrink-0" /> Select Multiple Purchase Dates
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-1">
+            <div className="text-xs text-muted-foreground">
+              Select specific purchase dates below to filter and generate custom reports for selected dates:
+            </div>
+
+            {/* Custom Date Input Add Button */}
+            <div className="flex gap-2 items-center bg-secondary/30 p-2.5 rounded-lg border border-border/60">
+              <Input
+                type="date"
+                value={customMultiDate}
+                onChange={(e) => setCustomMultiDate(e.target.value)}
+                className="h-8 text-xs font-mono flex-1"
+              />
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 text-xs font-bold gap-1"
+                onClick={() => {
+                  if (customMultiDate && !selectedDates.includes(customMultiDate)) {
+                    setSelectedDates((prev) => [...prev, customMultiDate]);
+                    setCustomMultiDate("");
+                  }
+                }}
+              >
+                <Plus className="h-3.5 w-3.5" /> Add Date
+              </Button>
+            </div>
+
+            {/* Distinct Purchase Dates List from Inventory */}
+            {(() => {
+              const allDatesMap: Record<string, { count: number; suppliers: string[] }> = {};
+              cylinders.forEach((c) => {
+                const d = c.purchased_at ? c.purchased_at.slice(0, 10) : c.created_at ? c.created_at.slice(0, 10) : null;
+                if (!d) return;
+                if (!allDatesMap[d]) {
+                  allDatesMap[d] = { count: 0, suppliers: [] };
+                }
+                allDatesMap[d].count += 1;
+                const supp = getCylMeta(c).supplier_name;
+                if (supp !== "—" && !allDatesMap[d].suppliers.includes(supp)) {
+                  allDatesMap[d].suppliers.push(supp);
+                }
+              });
+
+              const sortedDates = Object.keys(allDatesMap).sort((a, b) => b.localeCompare(a));
+
+              return (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs font-bold text-foreground">
+                    <span>Available Purchase Dates ({sortedDates.length})</span>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDates(sortedDates)}
+                        className="text-[10px] text-primary hover:underline font-bold cursor-pointer"
+                      >
+                        Select All
+                      </button>
+                      <span className="text-muted-foreground">•</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDates([])}
+                        className="text-[10px] text-rose-400 hover:underline font-bold cursor-pointer"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-64 overflow-y-auto p-1">
+                    {sortedDates.map((d) => {
+                      const isSel = selectedDates.includes(d);
+                      const info = allDatesMap[d];
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => {
+                            if (isSel) {
+                              setSelectedDates((prev) => prev.filter((item) => item !== d));
+                            } else {
+                              setSelectedDates((prev) => [...prev, d]);
+                            }
+                          }}
+                          className={cn(
+                            "p-2.5 rounded-lg border text-left transition-all cursor-pointer space-y-1",
+                            isSel
+                              ? "bg-primary/15 border-primary text-foreground shadow-xs scale-[1.02]"
+                              : "bg-secondary/40 border-border/60 hover:bg-secondary text-muted-foreground"
+                          )}
+                        >
+                          <div className="flex items-center justify-between text-xs font-bold font-mono">
+                            <span>📅 {new Date(d).toLocaleDateString("en-IN")}</span>
+                            {isSel && <span className="text-primary text-[10px] font-bold">✓ Selected</span>}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground flex justify-between items-center">
+                            <span>📦 {info.count} cylinder(s)</span>
+                            {info.suppliers.length > 0 && <span className="truncate max-w-[100px] text-[9px]">{info.suppliers[0]}</span>}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
+            <Button
+              onClick={() => setMultiDateModalOpen(false)}
+              className="w-full h-10 font-bold text-xs uppercase tracking-wider"
+            >
+              Apply Filter ({selectedDates.length} Date(s) Selected)
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
