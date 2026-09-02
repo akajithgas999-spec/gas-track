@@ -48,8 +48,19 @@ type LineItem = {
   returned_numbers: string;
 };
 
-function parseCylNums(raw: string): number[] {
-  return raw.split(/[,\s]+/).map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n) && n >= 1 && n <= 2000);
+function parseCylNums(raw: string): string[] {
+  if (!raw) return [];
+  return raw
+    .split(/[,;\n\s]+/)
+    .map((s) => s.trim().toUpperCase())
+    .filter((s) => s.length > 0);
+}
+
+function getCylId(c: any): string {
+  if (c.cylinder_number !== undefined && c.cylinder_number !== null && String(c.cylinder_number).trim() !== "") {
+    return String(c.cylinder_number).trim().toUpperCase();
+  }
+  return String(c.serial_number ?? "").trim().toUpperCase();
 }
 
 const PAY_STATUS_STYLES: Record<PaymentStatus, { bg: string; text: string; icon: any; label: string }> = {
@@ -216,16 +227,19 @@ export default function Invoices() {
   const allIssued = lines.flatMap((l) => parseCylNums(l.issued_numbers));
   const allReturned = lines.flatMap((l) => parseCylNums(l.returned_numbers));
 
-  const toggleCylinderInLine = (idx: number, field: "issued_numbers" | "returned_numbers", cylNum: number) => {
+  const toggleCylinderInLine = (idx: number, field: "issued_numbers" | "returned_numbers", cylId: string) => {
+    const cleanId = cylId.trim().toUpperCase();
     setLines((curr) =>
       curr.map((l, i) => {
         if (i !== idx) return l;
         const currentNums = parseCylNums(l[field]);
-        let updated: number[];
-        if (currentNums.includes(cylNum)) {
-          updated = currentNums.filter((n) => n !== cylNum);
+        let updated: string[];
+        if (currentNums.includes(cleanId)) {
+          updated = currentNums.filter((n) => n !== cleanId);
         } else {
-          updated = [...currentNums, cylNum].sort((a, b) => a - b);
+          updated = [...currentNums, cleanId].sort((a, b) =>
+            a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
+          );
         }
         const updatedStr = updated.join(", ");
         const patch: Partial<LineItem> = { [field]: updatedStr };
@@ -243,7 +257,7 @@ export default function Invoices() {
 
     // Validate that all issued cylinders are purchased and in warehouse stock
     const unpurchasedIssued = allIssued.filter(
-      (n) => !stockCylinders.some((c) => Number(c.cylinder_number) === n)
+      (n) => !stockCylinders.some((c) => getCylId(c) === n)
     );
     if (unpurchasedIssued.length > 0) {
       return toast.error(
@@ -322,8 +336,15 @@ export default function Invoices() {
     // Update database cylinder status & log transactions for issued & returned cylinders
     for (const l of lines) {
       const issuedNums = parseCylNums(l.issued_numbers);
-      for (const cylNum of issuedNums) {
-        const cyl = stockCylinders.find((c) => Number(c.cylinder_number) === cylNum);
+      for (const cylId of issuedNums) {
+        let cyl = stockCylinders.find((c) => getCylId(c) === cylId);
+        if (!cyl) {
+          const isPure = /^\d+$/.test(cylId);
+          const { data: found } = isPure
+            ? await (supabase.from("cylinders") as any).select("id, type_id").eq("cylinder_number", parseInt(cylId, 10)).maybeSingle()
+            : await (supabase.from("cylinders") as any).select("id, type_id").eq("serial_number", cylId).maybeSingle();
+          cyl = found;
+        }
         if (cyl) {
           await (supabase.from("cylinders") as any)
             .update({
@@ -346,13 +367,13 @@ export default function Invoices() {
       }
 
       const returnedNums = parseCylNums(l.returned_numbers);
-      for (const cylNum of returnedNums) {
-        let cyl = issuedCylinders.find((c) => Number(c.cylinder_number) === cylNum);
+      for (const cylId of returnedNums) {
+        let cyl = issuedCylinders.find((c) => getCylId(c) === cylId);
         if (!cyl) {
-          const { data: found } = await (supabase.from("cylinders") as any)
-            .select("id, type_id")
-            .eq("cylinder_number", cylNum)
-            .maybeSingle();
+          const isPure = /^\d+$/.test(cylId);
+          const { data: found } = isPure
+            ? await (supabase.from("cylinders") as any).select("id, type_id").eq("cylinder_number", parseInt(cylId, 10)).maybeSingle()
+            : await (supabase.from("cylinders") as any).select("id, type_id").eq("serial_number", cylId).maybeSingle();
           cyl = found;
         }
         if (cyl) {
@@ -604,7 +625,7 @@ export default function Invoices() {
                             const availStock = stockCylinders.filter((c) => !l.type_id || c.type_id === l.type_id);
                             const currentIssued = parseCylNums(l.issued_numbers);
                             const invalidIssued = currentIssued.filter(
-                              (n) => !stockCylinders.some((c) => Number(c.cylinder_number) === n)
+                              (n) => !stockCylinders.some((c) => getCylId(c) === n)
                             );
                             return (
                               <>
@@ -632,15 +653,15 @@ export default function Invoices() {
                                     <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">
                                       Select purchased cylinder from warehouse:
                                     </div>
-                                    <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1.5 rounded-lg border border-border/40 bg-secondary/20">
+                                    <div className="flex flex-wrap gap-1 max-h-28 overflow-y-auto p-1.5 rounded-lg border border-border/40 bg-secondary/20">
                                       {availStock.map((c) => {
-                                        const num = Number(c.cylinder_number);
-                                        const isSelected = currentIssued.includes(num);
+                                        const cylId = getCylId(c);
+                                        const isSelected = currentIssued.includes(cylId);
                                         return (
                                           <button
                                             key={c.id}
                                             type="button"
-                                            onClick={() => toggleCylinderInLine(i, "issued_numbers", num)}
+                                            onClick={() => toggleCylinderInLine(i, "issued_numbers", cylId)}
                                             className={cn(
                                               "px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-all cursor-pointer",
                                               isSelected
@@ -649,7 +670,7 @@ export default function Invoices() {
                                             )}
                                             title={`Serial: ${c.serial_number} (${c.fill_status || "filled"})`}
                                           >
-                                            #{num || c.serial_number}
+                                            #{c.cylinder_number ?? c.serial_number}
                                           </button>
                                         );
                                       })}
@@ -703,15 +724,15 @@ export default function Invoices() {
                                     <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">
                                       Click to mark issued cylinder as returned:
                                     </div>
-                                    <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1.5 rounded-lg border border-border/40 bg-secondary/20">
+                                    <div className="flex flex-wrap gap-1 max-h-28 overflow-y-auto p-1.5 rounded-lg border border-border/40 bg-secondary/20">
                                       {availIssued.map((c) => {
-                                        const num = Number(c.cylinder_number);
-                                        const isSelected = currentReturned.includes(num);
+                                        const cylId = getCylId(c);
+                                        const isSelected = currentReturned.includes(cylId);
                                         return (
                                           <button
                                             key={c.id}
                                             type="button"
-                                            onClick={() => toggleCylinderInLine(i, "returned_numbers", num)}
+                                            onClick={() => toggleCylinderInLine(i, "returned_numbers", cylId)}
                                             className={cn(
                                               "px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-all cursor-pointer",
                                               isSelected
@@ -720,7 +741,7 @@ export default function Invoices() {
                                             )}
                                             title={`Serial: ${c.serial_number}`}
                                           >
-                                            #{num || c.serial_number} {isSelected ? "✓ Returned" : ""}
+                                            #{c.cylinder_number ?? c.serial_number} {isSelected ? "✓ Returned" : ""}
                                           </button>
                                         );
                                       })}
