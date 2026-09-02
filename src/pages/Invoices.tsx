@@ -63,6 +63,29 @@ function getCylId(c: any): string {
   return String(c.serial_number ?? "").trim().toUpperCase();
 }
 
+function handleSpaceAutoComma(
+  e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+  currentValue: string,
+  onChange: (val: string) => void
+) {
+  if (e.key === " ") {
+    const target = e.currentTarget;
+    const cursorPos = target.selectionStart ?? currentValue.length;
+    const textBefore = currentValue.slice(0, cursorPos);
+    const textAfter = currentValue.slice(cursorPos);
+
+    if (/[a-zA-Z0-9]$/.test(textBefore)) {
+      e.preventDefault();
+      const updated = `${textBefore}, ${textAfter}`;
+      onChange(updated);
+      setTimeout(() => {
+        const newPos = cursorPos + 2;
+        target.setSelectionRange(newPos, newPos);
+      }, 0);
+    }
+  }
+}
+
 const PAY_STATUS_STYLES: Record<PaymentStatus, { bg: string; text: string; icon: any; label: string }> = {
   paid:    { bg: "bg-emerald-500/15", text: "text-emerald-400", icon: CheckCircle2, label: "Paid" },
   partial: { bg: "bg-amber-500/15",   text: "text-amber-400",   icon: Clock,        label: "Half Paid" },
@@ -709,6 +732,7 @@ export default function Invoices() {
                                   )}
                                   value={l.issued_numbers}
                                   onChange={(e) => updateLine(i, { issued_numbers: e.target.value })}
+                                  onKeyDown={(e) => handleSpaceAutoComma(e, l.issued_numbers, (v) => updateLine(i, { issued_numbers: v }))}
                                   placeholder="Select from stock below or type e.g. 5, 6"
                                 />
 
@@ -780,6 +804,7 @@ export default function Invoices() {
                                   className="font-mono text-xs h-9"
                                   value={l.returned_numbers}
                                   onChange={(e) => updateLine(i, { returned_numbers: e.target.value })}
+                                  onKeyDown={(e) => handleSpaceAutoComma(e, l.returned_numbers, (v) => updateLine(i, { returned_numbers: v }))}
                                   placeholder="Select below or type e.g. 3, 4"
                                 />
 
@@ -1178,12 +1203,13 @@ export default function Invoices() {
                 <Textarea
                   value={editIssuedInput}
                   onChange={(e) => setEditIssuedInput(e.target.value)}
+                  onKeyDown={(e) => handleSpaceAutoComma(e, editIssuedInput, setEditIssuedInput)}
                   placeholder="e.g. 208, 763, 119, 2001, 2002 or A101-A105"
                   rows={3}
                   className="font-mono text-xs mt-1"
                 />
                 <div className="text-[10px] text-muted-foreground mt-1">
-                  Separate numbers with commas (e.g. <code className="font-mono bg-secondary px-1 py-0.5 rounded">208, 763, 119, 2001, 2002</code>)
+                  💡 Type number & press <kbd className="px-1 py-0.5 rounded bg-secondary text-foreground font-mono text-[9px]">Spacebar</kbd> to insert comma automatically!
                 </div>
               </div>
 
@@ -1194,6 +1220,7 @@ export default function Invoices() {
                 <Textarea
                   value={editReturnedInput}
                   onChange={(e) => setEditReturnedInput(e.target.value)}
+                  onKeyDown={(e) => handleSpaceAutoComma(e, editReturnedInput, setEditReturnedInput)}
                   placeholder="e.g. 101, 102"
                   rows={2}
                   className="font-mono text-xs mt-1"

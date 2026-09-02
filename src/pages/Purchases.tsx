@@ -110,6 +110,29 @@ function parseBatchCylinderNumbers(input: string): string[] {
   });
 }
 
+function handleSpaceAutoComma(
+  e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+  currentValue: string,
+  onChange: (val: string) => void
+) {
+  if (e.key === " ") {
+    const target = e.currentTarget;
+    const cursorPos = target.selectionStart ?? currentValue.length;
+    const textBefore = currentValue.slice(0, cursorPos);
+    const textAfter = currentValue.slice(cursorPos);
+
+    if (/[a-zA-Z0-9]$/.test(textBefore)) {
+      e.preventDefault();
+      const updated = `${textBefore}, ${textAfter}`;
+      onChange(updated);
+      setTimeout(() => {
+        const newPos = cursorPos + 2;
+        target.setSelectionRange(newPos, newPos);
+      }, 0);
+    }
+  }
+}
+
 function getPaymentHistory(p: any): { 
   payments: PaymentInstallment[]; 
   paid: number; 
@@ -1357,6 +1380,7 @@ export default function Purchases() {
                       <Textarea
                         value={row.input}
                         onChange={(e) => updateBatchRow(idx, { input: e.target.value })}
+                        onKeyDown={(e) => handleSpaceAutoComma(e, row.input, (v) => updateBatchRow(idx, { input: v }))}
                         placeholder="e.g. A101-A150, B101-130, or A1, A2, B3"
                         rows={2}
                         className="font-mono text-xs mt-1"
