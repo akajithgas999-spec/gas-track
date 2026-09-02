@@ -146,16 +146,33 @@ export default function MyCylinders() {
   const [damageModalCyl, setDamageModalCyl] = useState<any | null>(null);
   const [editModalCyl, setEditModalCyl] = useState<any | null>(null);
 
-  // New Purchase / Batch Form State
-  const [addForm, setAddForm] = useState({
+  // New Purchase / Multi-Batch Form State
+  const [addFormHeader, setAddFormHeader] = useState({
     purchased_at: new Date().toISOString().slice(0, 10),
     supplier_name: "",
     batch_number: "",
     manufacture_year: String(new Date().getFullYear()),
-    type_id: "",
-    fill_status: "filled",
-    cylinder_numbers: "",
   });
+
+  const [batchRows, setBatchRows] = useState<Array<{ id: string; type_id: string; cylinder_numbers: string }>>([
+    { id: "batch-1", type_id: "", cylinder_numbers: "" },
+  ]);
+
+  const addBatchRow = () => {
+    setBatchRows((prev) => [
+      ...prev,
+      { id: `batch-${Date.now()}-${prev.length + 1}`, type_id: "", cylinder_numbers: "" },
+    ]);
+  };
+
+  const removeBatchRow = (id: string) => {
+    if (batchRows.length <= 1) return;
+    setBatchRows((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  const updateBatchRow = (id: string, updates: Partial<{ type_id: string; cylinder_numbers: string }>) => {
+    setBatchRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...updates } : r)));
+  };
 
   // Sell Cylinder Form State
   const [sellForm, setSellForm] = useState({
@@ -203,67 +220,70 @@ export default function MyCylinders() {
     loadData();
   }, [company]);
 
-  // ── SAVE BATCH NEW CYLINDERS ──
+  // ── SAVE MULTI-BATCH NEW CYLINDERS ──
   const handleAddBatchCylinders = async () => {
-    if (!addForm.type_id) return toast.error("Please select a cylinder/gas type");
-    const parsedNums = parseBatchCylinderNumbers(addForm.cylinder_numbers);
-    if (parsedNums.length === 0) return toast.error("Please enter at least one cylinder number or range");
-
-    let createdCount = 0;
-    for (const rawNum of parsedNums) {
-      const isPure = /^\d+$/.test(rawNum);
-      const cylNum = isPure ? parseInt(rawNum, 10) : null;
-      const serialNum = isPure ? `CYL-${rawNum.padStart(4, "0")}` : rawNum.toUpperCase();
-
-      const meta = {
-        supplier_name: addForm.supplier_name.trim() || "—",
-        batch_number: addForm.batch_number.trim() || "—",
-        manufacture_year: addForm.manufacture_year.trim() || String(new Date().getFullYear()),
-        is_damaged: false,
-        damage_notes: "",
-      };
-      const formattedNotes = buildNotesWithMeta("", meta);
-
-      const payload: any = {
-        serial_number: serialNum,
-        cylinder_number: cylNum,
-        type_id: addForm.type_id,
-        status: "in_stock",
-        fill_status: addForm.fill_status,
-        purchased_at: new Date(addForm.purchased_at).toISOString(),
-        supplier_name: addForm.supplier_name.trim() || null,
-        batch_number: addForm.batch_number.trim() || null,
-        manufacture_year: parseInt(addForm.manufacture_year, 10) || new Date().getFullYear(),
-        notes: formattedNotes,
-        company,
-      };
-
-      // Check if existing
-      const query = isPure
-        ? (supabase.from("cylinders") as any).select("id").eq("cylinder_number", cylNum)
-        : (supabase.from("cylinders") as any).select("id").eq("serial_number", serialNum);
-
-      const { data: existing } = await query.maybeSingle();
-
-      if (existing) {
-        await (supabase.from("cylinders") as any).update(payload).eq("id", existing.id);
-      } else {
-        await (supabase.from("cylinders") as any).insert(payload);
-      }
-      createdCount++;
+    const validRows = batchRows.filter((r) => r.type_id && r.cylinder_numbers.trim());
+    if (validRows.length === 0) {
+      return toast.error("Please select a gas type and enter cylinder numbers for at least one batch");
     }
 
-    toast.success(`Successfully registered ${createdCount} cylinder(s) in My Cylinders! 🎉`);
+    let createdCount = 0;
+
+    for (const r of validRows) {
+      const parsedNums = parseBatchCylinderNumbers(r.cylinder_numbers);
+      for (const rawNum of parsedNums) {
+        const isPure = /^\d+$/.test(rawNum);
+        const cylNum = isPure ? parseInt(rawNum, 10) : null;
+        const serialNum = isPure ? `CYL-${rawNum.padStart(4, "0")}` : rawNum.toUpperCase();
+
+        const meta = {
+          supplier_name: addFormHeader.supplier_name.trim() || "—",
+          batch_number: addFormHeader.batch_number.trim() || "—",
+          manufacture_year: addFormHeader.manufacture_year.trim() || String(new Date().getFullYear()),
+          is_damaged: false,
+          damage_notes: "",
+        };
+        const formattedNotes = buildNotesWithMeta("", meta);
+
+        const payload: any = {
+          serial_number: serialNum,
+          cylinder_number: cylNum,
+          type_id: r.type_id,
+          status: "in_stock",
+          fill_status: "filled",
+          purchased_at: new Date(addFormHeader.purchased_at).toISOString(),
+          supplier_name: addFormHeader.supplier_name.trim() || null,
+          batch_number: addFormHeader.batch_number.trim() || null,
+          manufacture_year: parseInt(addFormHeader.manufacture_year, 10) || new Date().getFullYear(),
+          notes: formattedNotes,
+          company,
+        };
+
+        // Check if existing
+        const query = isPure
+          ? (supabase.from("cylinders") as any).select("id").eq("cylinder_number", cylNum)
+          : (supabase.from("cylinders") as any).select("id").eq("serial_number", serialNum);
+
+        const { data: existing } = await query.maybeSingle();
+
+        if (existing) {
+          await (supabase.from("cylinders") as any).update(payload).eq("id", existing.id);
+        } else {
+          await (supabase.from("cylinders") as any).insert(payload);
+        }
+        createdCount++;
+      }
+    }
+
+    toast.success(`Successfully registered ${createdCount} cylinder(s) across ${validRows.length} gas type batch(es)! 🎉`);
     setAddModalOpen(false);
-    setAddForm({
+    setAddFormHeader({
       purchased_at: new Date().toISOString().slice(0, 10),
       supplier_name: "",
       batch_number: "",
       manufacture_year: String(new Date().getFullYear()),
-      type_id: "",
-      fill_status: "filled",
-      cylinder_numbers: "",
     });
+    setBatchRows([{ id: "batch-1", type_id: "", cylinder_numbers: "" }]);
     loadData();
   };
 
@@ -792,88 +812,145 @@ export default function MyCylinders() {
         </div>
       </Card>
 
-      {/* ── MODAL: ADD CYLINDERS / BATCH PURCHASE ── */}
+      {/* ── MODAL: ADD CYLINDERS / BATCH PURCHASE (MULTI-TYPE SUPPORT) ── */}
       <Dialog open={addModalOpen} onOpenChange={setAddModalOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-primary">
-              <Plus className="h-5 w-5" /> Add Cylinders / Batch Purchase
+            <DialogTitle className="flex items-center gap-2 text-primary pr-6">
+              <Plus className="h-5 w-5 shrink-0" /> Add Cylinders / Batch Purchase
             </DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-3.5 pt-2">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">Purchased Date *</Label>
-                <Input
-                  type="date"
-                  className="mt-1 h-9 text-xs"
-                  value={addForm.purchased_at}
-                  onChange={(e) => setAddForm({ ...addForm, purchased_at: e.target.value })}
-                />
+          <div className="space-y-4 pt-1">
+            {/* Bill / Purchase Metadata */}
+            <div className="p-3 rounded-lg border border-border/60 bg-secondary/30 space-y-3">
+              <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                📄 Purchase Bill Information
               </div>
-              <div>
-                <Label className="text-xs">Mfg / Purchase Year</Label>
-                <Input
-                  type="number"
-                  className="mt-1 h-9 font-mono text-xs"
-                  value={addForm.manufacture_year}
-                  onChange={(e) => setAddForm({ ...addForm, manufacture_year: e.target.value })}
-                  placeholder="e.g. 2025"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs">Purchased Date *</Label>
+                  <Input
+                    type="date"
+                    className="mt-1 h-9 text-xs"
+                    value={addFormHeader.purchased_at}
+                    onChange={(e) => setAddFormHeader({ ...addFormHeader, purchased_at: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Mfg / Purchase Year</Label>
+                  <Input
+                    type="number"
+                    className="mt-1 h-9 font-mono text-xs"
+                    value={addFormHeader.manufacture_year}
+                    onChange={(e) => setAddFormHeader({ ...addFormHeader, manufacture_year: e.target.value })}
+                    placeholder="e.g. 2025"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs">Supplier / Vendor Company</Label>
+                  <Input
+                    className="mt-1 h-9 text-xs"
+                    value={addFormHeader.supplier_name}
+                    onChange={(e) => setAddFormHeader({ ...addFormHeader, supplier_name: e.target.value })}
+                    placeholder="e.g. Surya Oxygen"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Bill Number</Label>
+                  <Input
+                    className="mt-1 h-9 font-mono text-xs"
+                    value={addFormHeader.batch_number}
+                    onChange={(e) => setAddFormHeader({ ...addFormHeader, batch_number: e.target.value })}
+                    placeholder="e.g. BILL-1029"
+                  />
+                </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">Supplier / Vendor Company</Label>
-                <Input
-                  className="mt-1 h-9 text-xs"
-                  value={addForm.supplier_name}
-                  onChange={(e) => setAddForm({ ...addForm, supplier_name: e.target.value })}
-                  placeholder="e.g. Surya Oxygen"
-                />
+            {/* Dynamic Gas Type Batch Rows */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-xs font-bold text-foreground">
+                <span>📦 Gas Type Batches ({batchRows.length})</span>
+                <span className="text-[10px] text-muted-foreground font-normal">Add multiple gas types in 1 bill</span>
               </div>
-              <div>
-                <Label className="text-xs">Bill Number</Label>
-                <Input
-                  className="mt-1 h-9 font-mono text-xs"
-                  value={addForm.batch_number}
-                  onChange={(e) => setAddForm({ ...addForm, batch_number: e.target.value })}
-                  placeholder="e.g. BILL-1029"
-                />
-              </div>
+
+              {batchRows.map((r, idx) => {
+                const parsedCount = parseBatchCylinderNumbers(r.cylinder_numbers).length;
+                return (
+                  <div key={r.id} className="p-3 rounded-lg border border-primary/20 bg-primary/5 space-y-3 relative">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-primary flex items-center gap-1.5">
+                        <Tag className="h-3.5 w-3.5" /> Batch #{idx + 1}
+                      </span>
+                      {batchRows.length > 1 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeBatchRow(r.id)}
+                          className="h-6 px-1.5 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 font-medium"
+                        >
+                          <Trash2 className="h-3.5 w-3.5 mr-1" /> Remove
+                        </Button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <Label className="text-xs font-semibold">Gas / Cylinder Type *</Label>
+                        <Select value={r.type_id} onValueChange={(v) => updateBatchRow(r.id, { type_id: v })}>
+                          <SelectTrigger className="mt-1 h-9 text-xs"><SelectValue placeholder="Select type" /></SelectTrigger>
+                          <SelectContent>
+                            {types.map((t) => (
+                              <SelectItem key={t.id} value={t.id}>{t.code} — {t.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div>
+                        <Label className="text-xs font-bold text-emerald-400">Cylinder Numbers / Ranges *</Label>
+                        <Textarea
+                          value={r.cylinder_numbers}
+                          onChange={(e) => updateBatchRow(r.id, { cylinder_numbers: e.target.value })}
+                          onKeyDown={(e) => handleSpaceAutoComma(e, r.cylinder_numbers, (v) => updateBatchRow(r.id, { cylinder_numbers: v }))}
+                          placeholder="e.g. 201-220, A101-A120"
+                          rows={2}
+                          className="font-mono text-xs mt-1"
+                        />
+                      </div>
+                    </div>
+
+                    {parsedCount > 0 && (
+                      <div className="text-[10px] font-mono text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 w-fit">
+                        ✅ {parsedCount} cylinder(s) parsed
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addBatchRow}
+                className="w-full h-9 text-xs font-bold gap-1.5 border-dashed border-primary/40 hover:bg-primary/10 text-primary"
+              >
+                <Plus className="h-4 w-4" /> + Add Another Gas Type Batch
+              </Button>
             </div>
 
-            <div>
-              <Label className="text-xs">Gas / Cylinder Type *</Label>
-              <Select value={addForm.type_id} onValueChange={(v) => setAddForm({ ...addForm, type_id: v })}>
-                <SelectTrigger className="mt-1 h-9 text-xs"><SelectValue placeholder="Select type" /></SelectTrigger>
-                <SelectContent>
-                  {types.map((t) => (
-                    <SelectItem key={t.id} value={t.id}>{t.code} — {t.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Label className="text-xs font-bold text-emerald-400">Cylinder Numbers / Ranges *</Label>
-              <Textarea
-                value={addForm.cylinder_numbers}
-                onChange={(e) => setAddForm({ ...addForm, cylinder_numbers: e.target.value })}
-                onKeyDown={(e) => handleSpaceAutoComma(e, addForm.cylinder_numbers, (v) => setAddForm({ ...addForm, cylinder_numbers: v }))}
-                placeholder="e.g. 201-220, 301, 302, A101-A120"
-                rows={3}
-                className="font-mono text-xs mt-1"
-              />
-              <div className="text-[10px] text-muted-foreground mt-1">
-                💡 Type number and press <kbd className="px-1 py-0.5 rounded bg-secondary text-foreground font-mono text-[9px]">Spacebar</kbd> to insert comma automatically!
-              </div>
+            <div className="text-[10px] text-muted-foreground">
+              💡 Type cylinder numbers and press <kbd className="px-1 py-0.5 rounded bg-secondary text-foreground font-mono text-[9px]">Spacebar</kbd> to insert comma automatically!
             </div>
 
             <Button onClick={handleAddBatchCylinders} className="w-full h-10 font-bold text-xs uppercase tracking-wider">
-              Save Cylinders to Inventory
+              Save All Batches to Inventory
             </Button>
           </div>
         </DialogContent>
