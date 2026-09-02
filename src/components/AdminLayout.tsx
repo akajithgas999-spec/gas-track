@@ -4,6 +4,7 @@ import { useCompany } from "@/hooks/useCompany";
 import {
   LayoutDashboard,
   Cylinder,
+  Database,
   Tag,
   Users,
   ArrowLeftRight,
@@ -22,6 +23,7 @@ import { Button } from "@/components/ui/button";
 const navItems = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/search", label: "Search", icon: Search },
+  { to: "/my-cylinders", label: "My Cylinders", icon: Database },
   { to: "/cylinders", label: "Cylinders", icon: Cylinder },
   { to: "/types", label: "Cylinder Types", icon: Tag },
   { to: "/customers", label: "Customers", icon: Users },

@@ -10,6 +10,7 @@ import AdminLayout from "@/components/AdminLayout";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import Cylinders from "./pages/Cylinders";
+import MyCylinders from "./pages/MyCylinders";
 import CylinderTypes from "./pages/CylinderTypes";
 import Customers from "./pages/Customers";
 import Transactions from "./pages/Transactions";
@@ -35,6 +36,7 @@ const App = () => (
             <Route path="/auth" element={<Auth />} />
             <Route element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
               <Route path="/" element={<Dashboard />} />
+              <Route path="/my-cylinders" element={<MyCylinders />} />
               <Route path="/cylinders" element={<Cylinders />} />
               <Route path="/types" element={<CylinderTypes />} />
               <Route path="/customers" element={<Customers />} />
