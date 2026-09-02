@@ -874,17 +874,24 @@ export default function MyCylinders() {
             {/* Dynamic Gas Type Batch Rows */}
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs font-bold text-foreground">
-                <span>📦 Gas Type Batches ({batchRows.length})</span>
+                <span className="flex items-center gap-1.5">
+                  <Package className="h-4 w-4 text-primary" /> Gas Type Batches ({batchRows.length})
+                </span>
                 <span className="text-[10px] text-muted-foreground font-normal">Add multiple gas types in 1 bill</span>
               </div>
 
               {batchRows.map((r, idx) => {
                 const parsedCount = parseBatchCylinderNumbers(r.cylinder_numbers).length;
+                const selType = types.find((t) => t.id === r.type_id);
                 return (
-                  <div key={r.id} className="p-3 rounded-lg border border-primary/20 bg-primary/5 space-y-3 relative">
+                  <div
+                    key={r.id}
+                    className="p-3.5 rounded-lg border-l-4 border-l-primary border border-border/70 bg-card/60 space-y-3 shadow-xs relative"
+                  >
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-primary flex items-center gap-1.5">
-                        <Tag className="h-3.5 w-3.5" /> Batch #{idx + 1}
+                      <span className="text-xs font-extrabold text-foreground flex items-center gap-1.5">
+                        <Tag className="h-3.5 w-3.5 text-primary" />
+                        Batch #{idx + 1} {selType ? `(${selType.code})` : ""}
                       </span>
                       {batchRows.length > 1 && (
                         <Button
@@ -892,9 +899,9 @@ export default function MyCylinders() {
                           variant="ghost"
                           size="sm"
                           onClick={() => removeBatchRow(r.id)}
-                          className="h-6 px-1.5 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 font-medium"
+                          className="h-6 px-2 text-[11px] text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 font-semibold"
                         >
-                          <Trash2 className="h-3.5 w-3.5 mr-1" /> Remove
+                          <Trash2 className="h-3.5 w-3.5 mr-1" /> Remove Batch
                         </Button>
                       )}
                     </div>
@@ -926,8 +933,8 @@ export default function MyCylinders() {
                     </div>
 
                     {parsedCount > 0 && (
-                      <div className="text-[10px] font-mono text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 w-fit">
-                        ✅ {parsedCount} cylinder(s) parsed
+                      <div className="text-[10px] font-mono text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20 w-fit">
+                        ✅ {parsedCount} cylinder(s) parsed for this type
                       </div>
                     )}
                   </div>
@@ -939,18 +946,20 @@ export default function MyCylinders() {
                 variant="outline"
                 size="sm"
                 onClick={addBatchRow}
-                className="w-full h-9 text-xs font-bold gap-1.5 border-dashed border-primary/40 hover:bg-primary/10 text-primary"
+                className="w-full h-9 text-xs font-bold gap-1.5 border-dashed border-primary/50 hover:bg-primary/10 text-primary transition-all"
               >
-                <Plus className="h-4 w-4" /> + Add Another Gas Type Batch
+                <Plus className="h-4 w-4" /> Add Another Gas Type Batch
               </Button>
             </div>
 
-            <div className="text-[10px] text-muted-foreground">
-              💡 Type cylinder numbers and press <kbd className="px-1 py-0.5 rounded bg-secondary text-foreground font-mono text-[9px]">Spacebar</kbd> to insert comma automatically!
+            <div className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+              <span>💡 Type cylinder numbers and press</span>
+              <kbd className="px-1.5 py-0.5 rounded bg-secondary text-foreground font-mono text-[9px] border border-border">Spacebar</kbd>
+              <span>to insert comma automatically!</span>
             </div>
 
-            <Button onClick={handleAddBatchCylinders} className="w-full h-10 font-bold text-xs uppercase tracking-wider">
-              Save All Batches to Inventory
+            <Button onClick={handleAddBatchCylinders} className="w-full h-10 font-bold text-xs uppercase tracking-wider gap-2">
+              <Package className="h-4 w-4" /> Save All Batches to Inventory
             </Button>
           </div>
         </DialogContent>
