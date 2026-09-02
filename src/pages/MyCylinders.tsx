@@ -501,7 +501,7 @@ export default function MyCylinders() {
 
       {/* ── SEARCH & FILTERS BAR ── */}
       <Card className="bg-card border-border/60 p-3.5 space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {/* Search bar */}
           <div className="relative sm:col-span-2">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -512,18 +512,6 @@ export default function MyCylinders() {
               className="pl-9 h-9 text-xs"
             />
           </div>
-
-          {/* Status Filter */}
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="All Statuses" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">🌐 All Statuses ({cylinders.length})</SelectItem>
-              <SelectItem value="in_stock">📦 In Warehouse ({inStockCount})</SelectItem>
-              <SelectItem value="issued">🚚 With Customers ({issuedCount})</SelectItem>
-              <SelectItem value="damaged">⚠️ Damaged ({damagedCount})</SelectItem>
-              <SelectItem value="sold">💰 Permanently Sold ({soldCount})</SelectItem>
-            </SelectContent>
-          </Select>
 
           {/* Gas Type Filter */}
           <Select value={typeFilter} onValueChange={setTypeFilter}>
@@ -551,7 +539,7 @@ export default function MyCylinders() {
                 <th className="text-left px-4 py-3">Batch # / Bill</th>
                 <th className="text-left px-4 py-3">Year</th>
                 <th className="text-left px-4 py-3">Fill Status</th>
-                <th className="text-left px-4 py-3">Current Status / Location</th>
+                <th className="text-left px-4 py-3">Location / Holder</th>
                 <th className="text-right px-4 py-3">Actions</th>
               </tr>
             </thead>
@@ -899,8 +887,8 @@ export default function MyCylinders() {
       <Dialog open={!!damageModalCyl} onOpenChange={(v) => !v && setDamageModalCyl(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-rose-400">
-              <ShieldAlert className="h-5 w-5" /> Update Cylinder Condition (Damage Record)
+            <DialogTitle className="flex items-center gap-2 text-rose-400 pr-6">
+              <ShieldAlert className="h-5 w-5 shrink-0" /> Damage Record
             </DialogTitle>
           </DialogHeader>
 
