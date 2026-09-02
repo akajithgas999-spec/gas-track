@@ -135,6 +135,11 @@ export default function MyCylinders() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [fillFilter, setFillFilter] = useState("all");
 
+  // Calendar Date Filter state
+  const [dateRangeType, setDateRangeType] = useState("all");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+
   // Modals state
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [sellModalCyl, setSellModalCyl] = useState<any | null>(null);
@@ -422,7 +427,13 @@ export default function MyCylinders() {
     let matchesType = typeFilter === "all" || c.type_id === typeFilter;
     let matchesFill = fillFilter === "all" || c.fill_status === fillFilter;
 
-    return matchesSearch && matchesStatus && matchesType && matchesFill;
+    // Purchased Date Filter
+    const cylDate = c.purchased_at ? c.purchased_at.slice(0, 10) : c.created_at ? c.created_at.slice(0, 10) : "";
+    let matchesDate = true;
+    if (fromDate && cylDate) matchesDate = cylDate >= fromDate;
+    if (toDate && cylDate && matchesDate) matchesDate = cylDate <= toDate;
+
+    return matchesSearch && matchesStatus && matchesType && matchesFill && matchesDate;
   });
 
   // ── STAT COUNTS ──
@@ -499,9 +510,9 @@ export default function MyCylinders() {
         </Card>
       </div>
 
-      {/* ── SEARCH & FILTERS BAR ── */}
+      {/* ── SEARCH & FILTERS BAR WITH CALENDAR DATE RANGE ── */}
       <Card className="bg-card border-border/60 p-3.5 space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-6 gap-2.5 items-center">
           {/* Search bar */}
           <div className="relative sm:col-span-2">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -514,16 +525,104 @@ export default function MyCylinders() {
           </div>
 
           {/* Gas Type Filter */}
-          <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="All Gas Types" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">🧪 All Gas Types</SelectItem>
-              {types.map((t) => (
-                <SelectItem key={t.id} value={t.id}>{t.code} — {t.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="sm:col-span-1">
+            <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="All Gas Types" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">🧪 All Gas Types</SelectItem>
+                {types.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>{t.code} — {t.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Date Presets Dropdown */}
+          <div className="sm:col-span-1">
+            <Select
+              value={dateRangeType}
+              onValueChange={(val) => {
+                setDateRangeType(val);
+                const today = new Date().toISOString().slice(0, 10);
+                if (val === "all") {
+                  setFromDate("");
+                  setToDate("");
+                } else if (val === "today") {
+                  setFromDate(today);
+                  setToDate(today);
+                } else if (val === "this_month") {
+                  const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+                  setFromDate(firstDay);
+                  setToDate(today);
+                } else if (val === "this_year") {
+                  const janFirst = `${new Date().getFullYear()}-01-01`;
+                  setFromDate(janFirst);
+                  setToDate(today);
+                }
+              }}
+            >
+              <SelectTrigger className="h-9 text-xs">
+                <Calendar className="h-3.5 w-3.5 mr-1.5 text-primary shrink-0" />
+                <SelectValue placeholder="Date Filter" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">📅 All Time (Any Date)</SelectItem>
+                <SelectItem value="today">⚡ Purchased Today</SelectItem>
+                <SelectItem value="this_month">📅 Purchased This Month</SelectItem>
+                <SelectItem value="this_year">🗓️ Purchased This Year</SelectItem>
+                <SelectItem value="custom">✏️ Custom Range</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* From Date Input */}
+          <div className="sm:col-span-1">
+            <Input
+              type="date"
+              value={fromDate}
+              onChange={(e) => {
+                setFromDate(e.target.value);
+                setDateRangeType("custom");
+              }}
+              title="From Purchased Date"
+              className="h-9 text-xs font-mono"
+            />
+          </div>
+
+          {/* To Date Input */}
+          <div className="sm:col-span-1">
+            <Input
+              type="date"
+              value={toDate}
+              onChange={(e) => {
+                setToDate(e.target.value);
+                setDateRangeType("custom");
+              }}
+              title="To Purchased Date"
+              className="h-9 text-xs font-mono"
+            />
+          </div>
         </div>
+
+        {(fromDate || toDate) && (
+          <div className="flex items-center justify-between text-xs pt-2 border-t border-border/40 text-muted-foreground">
+            <span>
+              Showing cylinders purchased from <strong className="text-primary font-mono">{fromDate || "beginning"}</strong> to <strong className="text-primary font-mono">{toDate || "today"}</strong>
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-[10px] text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 font-bold"
+              onClick={() => {
+                setDateRangeType("all");
+                setFromDate("");
+                setToDate("");
+              }}
+            >
+              Clear Date Filter ✕
+            </Button>
+          </div>
+        )}
       </Card>
 
       {/* ── CYLINDERS DATA TABLE ── */}
