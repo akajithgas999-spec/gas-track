@@ -129,7 +129,8 @@ function getCylMeta(c: any) {
     ? c.notes.split("__CYL_META__:")[0].trim()
     : c.notes ?? "";
 
-  const purDate = safeSlice10(c.purchased_at);
+  const rawPurchasedAt = c.purchased_at ?? meta.purchased_at ?? c.created_at ?? null;
+  const purDate = safeSlice10(rawPurchasedAt);
   const purYear = purDate ? purDate.slice(0, 4) : "—";
 
   return {
@@ -144,6 +145,8 @@ function getCylMeta(c: any) {
     sold_price: c.sold_price ?? meta.sold_price ?? 0,
     sold_notes: c.sold_notes ?? meta.sold_notes ?? "",
     clean_notes: cleanNotes,
+    purchased_at: rawPurchasedAt,
+    purchased_date_str: purDate,
     meta,
   };
 }
@@ -181,6 +184,11 @@ function MyCylindersContent() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [fillFilter, setFillFilter] = useState("all");
+
+  // Calendar Date Filter state
+  const [dateRangeType, setDateRangeType] = useState("all");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
 
   // Visual Real Calendar View Month state
   const [calViewYear, setCalViewYear] = useState(new Date().getFullYear());
@@ -518,7 +526,7 @@ function MyCylindersContent() {
     let matchesFill = fillFilter === "all" || c.fill_status === fillFilter;
 
     // Purchased Date Filter
-    const cylDate = safeSlice10(c.purchased_at) || safeSlice10(c.created_at);
+    const cylDate = m.purchased_date_str;
     let matchesDate = true;
 
     if (selectedDates.length > 0) {
@@ -753,15 +761,15 @@ function MyCylindersContent() {
 
                     {/* Purchased Date */}
                     <td className="px-4 py-3 font-mono">
-                      {c.purchased_at ? (
+                      {m.purchased_at ? (
                         <button
                           type="button"
-                          onClick={() => setViewDateModalDate(safeSlice10(c.purchased_at))}
+                          onClick={() => setViewDateModalDate(m.purchased_date_str)}
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 hover:border-primary/50 transition-all cursor-pointer group"
                           title="Click to view all cylinders purchased on this date"
                         >
                           <Calendar className="h-3 w-3 text-primary group-hover:scale-110 transition-transform" />
-                          {purDateStr}
+                          {formatDateDisplay(m.purchased_at)}
                         </button>
                       ) : (
                         <span className="text-muted-foreground italic">—</span>
