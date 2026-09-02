@@ -30,31 +30,84 @@ export type PaymentInstallment = {
   notes?: string;
 };
 
-function parseBatchCylinderNumbers(input: string): number[] {
-  const result: Set<number> = new Set();
-  const parts = input.split(/[,;\n\s]+/);
-  for (const part of parts) {
-    const trimmed = part.trim();
+function parseBatchCylinderNumbers(input: string): string[] {
+  const result: Set<string> = new Set();
+  const parts = input.split(/[,;\n]+/);
+
+  for (const rawPart of parts) {
+    const trimmed = rawPart.trim();
     if (!trimmed) continue;
-    const rangeMatch = trimmed.match(/^(\d+)\s*(?:-|to|\.\.)\s*(\d+)$/i);
-    if (rangeMatch) {
-      const start = parseInt(rangeMatch[1], 10);
-      const end = parseInt(rangeMatch[2], 10);
-      if (!isNaN(start) && !isNaN(end)) {
-        const min = Math.min(start, end);
-        const max = Math.max(start, end);
-        for (let n = min; n <= max; n++) {
-          result.add(n);
+
+    // Handle space-separated items if no range hyphens/to inside
+    const subParts = trimmed.includes("-") || trimmed.toLowerCase().includes("to") || trimmed.includes("..") 
+      ? [trimmed] 
+      : trimmed.split(/\s+/);
+
+    for (const part of subParts) {
+      const p = part.trim();
+      if (!p) continue;
+
+      // 1) Prefix Range: e.g. A101-A150, A-101 to A-150, A101-150
+      const prefixRangeMatch = p.match(/^([A-Za-z\-_]*?)(\d+)\s*(?:-|to|\.\.)\s*([A-Za-z\-_]*?)(\d+)$/i);
+      if (prefixRangeMatch) {
+        const p1 = prefixRangeMatch[1].toUpperCase();
+        const num1Str = prefixRangeMatch[2];
+        const p2 = prefixRangeMatch[3].toUpperCase();
+        const num2Str = prefixRangeMatch[4];
+
+        const prefix = p1 || p2;
+        if (!p1 || !p2 || p1 === p2) {
+          const start = parseInt(num1Str, 10);
+          const end = parseInt(num2Str, 10);
+          if (!isNaN(start) && !isNaN(end)) {
+            const min = Math.min(start, end);
+            const max = Math.max(start, end);
+            const padLen = Math.max(num1Str.length, num2Str.length);
+            const usePad = (num1Str.startsWith("0") || num2Str.startsWith("0")) && padLen > 1;
+
+            for (let n = min; n <= max; n++) {
+              const formattedNum = usePad ? String(n).padStart(padLen, "0") : String(n);
+              result.add(`${prefix}${formattedNum}`);
+            }
+            continue;
+          }
         }
       }
-    } else {
-      const num = parseInt(trimmed, 10);
-      if (!isNaN(num) && num > 0) {
-        result.add(num);
+
+      // 2) Suffix Range: e.g. 101A-150A
+      const suffixRangeMatch = p.match(/^(\d+)([A-Za-z\-_]+)\s*(?:-|to|\.\.)\s*(\d+)([A-Za-z\-_]+)$/i);
+      if (suffixRangeMatch) {
+        const num1Str = suffixRangeMatch[1];
+        const s1 = suffixRangeMatch[2].toUpperCase();
+        const num2Str = suffixRangeMatch[3];
+        const s2 = suffixRangeMatch[4].toUpperCase();
+
+        if (s1 === s2) {
+          const start = parseInt(num1Str, 10);
+          const end = parseInt(num2Str, 10);
+          if (!isNaN(start) && !isNaN(end)) {
+            const min = Math.min(start, end);
+            const max = Math.max(start, end);
+            const padLen = Math.max(num1Str.length, num2Str.length);
+            const usePad = (num1Str.startsWith("0") || num2Str.startsWith("0")) && padLen > 1;
+
+            for (let n = min; n <= max; n++) {
+              const formattedNum = usePad ? String(n).padStart(padLen, "0") : String(n);
+              result.add(`${formattedNum}${s1}`);
+            }
+            continue;
+          }
+        }
       }
+
+      // 3) Single item (e.g. A101, B-5, 101, CYL-0101)
+      result.add(p.toUpperCase());
     }
   }
-  return Array.from(result).sort((a, b) => a - b);
+
+  return Array.from(result).sort((a, b) => {
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+  });
 }
 
 function getPaymentHistory(p: any): { 
@@ -280,15 +333,16 @@ export default function Purchases() {
       const rateToUse = row.rate.trim() || (selType?.price ? String(selType.price) : "0");
       const hsnToUse = selType?.hsn_code ?? "";
 
-      for (const num of cylNums) {
-        let serial = "";
-        if (cylindersCache.has(num)) {
-          serial = cylindersCache.get(num)!.serial_number;
-        } else {
-          serial = `CYL-${String(num).padStart(4, "0")}`;
+      for (const item of cylNums) {
+        let serial = item;
+        const numVal = parseInt(item, 10);
+        if (!isNaN(numVal) && cylindersCache.has(numVal)) {
+          serial = cylindersCache.get(numVal)!.serial_number;
+        } else if (/^\d+$/.test(item)) {
+          serial = `CYL-${item.padStart(4, "0")}`;
         }
         allNewLines.push({
-          cylinder_number: String(num),
+          cylinder_number: item,
           serial_number: serial,
           type_id: row.type_id,
           hsn_code: hsnToUse,
@@ -1207,8 +1261,8 @@ export default function Purchases() {
           </DialogHeader>
           <div className="space-y-4 pt-1">
             <div className="rounded-xl bg-secondary/30 p-3 border border-border/50 text-xs text-muted-foreground space-y-1">
-              <p className="font-semibold text-foreground">⚡ Multi-Type Batch Entry:</p>
-              <p>You can add different cylinder types in one purchase bill (e.g., 10 N2O, 15 CO2, 25 MO2). Enter ranges for each type below or click <strong>+ Add Another Type Batch</strong>.</p>
+              <p className="font-semibold text-foreground">⚡ Multi-Type & Alphanumeric Batch Entry:</p>
+              <p>Supports letter prefixes/suffixes & numbers (e.g., <code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">A101-A150</code>, <code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">B101-130</code>, <code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">101A-120A</code>, or <code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">A1, A2, B3</code>).</p>
             </div>
 
             <div className="space-y-4">
@@ -1296,7 +1350,7 @@ export default function Purchases() {
                       <Textarea
                         value={row.input}
                         onChange={(e) => updateBatchRow(idx, { input: e.target.value })}
-                        placeholder="e.g. 101-110 or 101, 102, 103"
+                        placeholder="e.g. A101-A150, B101-130, or A1, A2, B3"
                         rows={2}
                         className="font-mono text-xs mt-1"
                       />
