@@ -894,7 +894,7 @@ export default function Invoices() {
                                               )}
                                               title={custName ? `Held by ${custName}` : "Issued cylinder"}
                                             >
-                                              #{c.cylinder_number ?? c.serial_number} {custName ? `(${custName})` : ""} {isSelected ? "✓" : ""}
+                                              #{c.cylinder_number ?? c.serial_number} {isSelected ? "✓ Returned" : ""}
                                             </button>
                                           );
                                         })}
