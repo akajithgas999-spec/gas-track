@@ -174,6 +174,49 @@ function formatDateDisplay(dateStr: string | null | undefined) {
   }
 }
 
+type CylinderPair = { id: string; cylinder_number: string; serial_number: string };
+
+type BatchRow = {
+  id: string;
+  type_id: string;
+  entry_mode: "itemized" | "bulk";
+  pairs: CylinderPair[];
+  cylinder_numbers: string;
+  serial_numbers: string;
+  auto_count: string;
+  auto_start_num: string;
+  auto_prefix: string;
+};
+
+function createInitialPairs(count: number = 5, startNum: number = 101, serialPrefix: string = "SN-"): CylinderPair[] {
+  const result: CylinderPair[] = [];
+  for (let i = 0; i < count; i++) {
+    const numStr = String(startNum + i);
+    const sPrefix = serialPrefix.trim() || "SN-";
+    const formattedSerial = sPrefix.endsWith("-") || sPrefix.endsWith("_") ? (sPrefix + numStr) : (sPrefix + "-" + numStr);
+    result.push({
+      id: "p-" + Date.now() + "-" + (i + 1) + "-" + Math.random().toString(36).slice(2, 6),
+      cylinder_number: numStr,
+      serial_number: formattedSerial,
+    });
+  }
+  return result;
+}
+
+function createInitialBatchRow(idStr?: string): BatchRow {
+  return {
+    id: idStr || ("batch-" + Date.now()),
+    type_id: "",
+    entry_mode: "itemized",
+    pairs: createInitialPairs(5, 101, "SN-"),
+    cylinder_numbers: "",
+    serial_numbers: "",
+    auto_count: "20",
+    auto_start_num: "101",
+    auto_prefix: "SN-",
+  };
+}
+
 function MyCylindersContent() {
   const { company } = useCompany();
   const [cylinders, setCylinders] = useState<any[]>([]);
@@ -217,49 +260,6 @@ function MyCylindersContent() {
     batch_number: "",
     manufacture_year: String(new Date().getFullYear()),
   });
-
-  type CylinderPair = { id: string; cylinder_number: string; serial_number: string };
-
-  type BatchRow = {
-    id: string;
-    type_id: string;
-    entry_mode: "itemized" | "bulk";
-    pairs: CylinderPair[];
-    cylinder_numbers: string;
-    serial_numbers: string;
-    auto_count: string;
-    auto_start_num: string;
-    auto_prefix: string;
-  };
-
-  function createInitialPairs(count: number = 5, startNum: number = 101, serialPrefix: string = "SN-"): CylinderPair[] {
-    const result: CylinderPair[] = [];
-    for (let i = 0; i < count; i++) {
-      const numStr = String(startNum + i);
-      const sPrefix = serialPrefix.trim() || "SN-";
-      const formattedSerial = sPrefix.endsWith("-") || sPrefix.endsWith("_") ? `${sPrefix}${numStr}` : `${sPrefix}-${numStr}`;
-      result.push({
-        id: `p-${Date.now()}-${i + 1}-${Math.random().toString(36).slice(2, 6)}`,
-        cylinder_number: numStr,
-        serial_number: formattedSerial,
-      });
-    }
-    return result;
-  }
-
-  function createInitialBatchRow(idStr?: string): BatchRow {
-    return {
-      id: idStr || `batch-${Date.now()}`,
-      type_id: "",
-      entry_mode: "itemized",
-      pairs: createInitialPairs(5, 101, "SN-"),
-      cylinder_numbers: "",
-      serial_numbers: "",
-      auto_count: "20",
-      auto_start_num: "101",
-      auto_prefix: "SN-",
-    };
-  }
 
   const [batchRows, setBatchRows] = useState<BatchRow[]>([
     createInitialBatchRow("batch-1"),
@@ -497,8 +497,6 @@ function MyCylindersContent() {
     setBatchRows([createInitialBatchRow("batch-1")]);
     loadData();
   };
-    loadData();
-  };
 
   // ── SELL CYLINDER ASSET ──
   const handleSellCylinder = async () => {
@@ -683,6 +681,60 @@ function MyCylindersContent() {
       </div>
     );
   }
+
+  // Calendar Grid Data
+  const calendarData = useMemo(() => {
+    const monthNames = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December"
+    ];
+    const firstDayIndex = new Date(calViewYear, calViewMonth, 1).getDay();
+    const daysInMonth = new Date(calViewYear, calViewMonth + 1, 0).getDate();
+
+    const days = [];
+    for (let i = 0; i < firstDayIndex; i++) days.push(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = calViewYear + "-" + String(calViewMonth + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+      days.push({ dayNum: d, dateStr });
+    }
+
+    const purchaseMap: Record<string, number> = {};
+    cylinders.forEach((c) => {
+      const d = safeSlice10(c.purchased_at) || safeSlice10(c.created_at);
+      if (d) purchaseMap[d] = (purchaseMap[d] || 0) + 1;
+    });
+
+    return { monthNames, days, purchaseMap };
+  }, [calViewYear, calViewMonth, cylinders]);
+
+  const { monthNames, days, purchaseMap } = calendarData;
+
+  // Batches List Data
+  const batchesData = useMemo(() => {
+    const allDatesMap: Record<string, { count: number; suppliers: string[] }> = {};
+    cylinders.forEach((c) => {
+      const d = safeSlice10(c.purchased_at) || safeSlice10(c.created_at);
+      if (!d) return;
+      if (!allDatesMap[d]) allDatesMap[d] = { count: 0, suppliers: [] };
+      allDatesMap[d].count += 1;
+      const supp = getCylMeta(c).supplier_name;
+      if (supp !== "—" && !allDatesMap[d].suppliers.includes(supp)) allDatesMap[d].suppliers.push(supp);
+    });
+
+    const sortedDates = Object.keys(allDatesMap).sort((a, b) => b.localeCompare(a));
+    return { allDatesMap, sortedDates };
+  }, [cylinders]);
+
+  const { allDatesMap, sortedDates } = batchesData;
+
+  // View Purchase Date Cylinders
+  const viewDateCyls = useMemo(() => {
+    if (!viewDateModalDate) return [];
+    return cylinders.filter((c) => {
+      const d = safeSlice10(c.purchased_at) || safeSlice10(c.created_at);
+      return d === viewDateModalDate;
+    });
+  }, [viewDateModalDate, cylinders]);
 
   // ── STAT COUNTS ──
   const totalCount = cylinders.length;
@@ -1592,28 +1644,13 @@ function MyCylindersContent() {
             </DialogTitle>
           </DialogHeader>
 
-          {viewDateModalDate && (() => {
-            const dateCyls = cylinders.filter(
-              (c) => (safeSlice10(c.purchased_at) || safeSlice10(c.created_at)) === viewDateModalDate
-            );
-
-            // Compute type breakdown
-            const typeCounts: Record<string, number> = {};
-            dateCyls.forEach((c) => {
-              const code = c.cylinder_types?.code || "Unknown";
-              typeCounts[code] = (typeCounts[code] || 0) + 1;
-            });
-
-            const uniqueSuppliers = Array.from(new Set(dateCyls.map((c) => getCylMeta(c).supplier_name).filter((s) => s !== "—")));
-            const uniqueBills = Array.from(new Set(dateCyls.map((c) => getCylMeta(c).batch_number).filter((b) => b !== "—")));
-
-            return (
+          {viewDateModalDate && (
               <div className="space-y-4 pt-1">
                 {/* Stats Header */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="p-3 rounded-lg bg-primary/10 border border-primary/20 space-y-0.5">
                     <div className="text-[10px] uppercase font-bold text-muted-foreground">Total Purchased</div>
-                    <div className="text-xl font-black font-mono text-primary">{dateCyls.length} Cylinders</div>
+                    <div className="text-xl font-black font-mono text-primary">{viewDateCyls.length} Cylinders</div>
                   </div>
                   <div className="p-3 rounded-lg bg-secondary/50 border border-border/60 space-y-0.5">
                     <div className="text-[10px] uppercase font-bold text-muted-foreground">Supplier / Vendor</div>
@@ -1655,7 +1692,7 @@ function MyCylindersContent() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border/40 font-mono">
-                        {dateCyls.map((c) => {
+                        {viewDateCyls.map((c) => {
                           const m = getCylMeta(c);
                           const isSold = c.status === "retired" || m.sold_at != null;
                           const isDamaged = m.is_damaged || c.status === "damaged" || c.status === "maintenance";
@@ -1691,11 +1728,10 @@ function MyCylindersContent() {
                   }}
                   className="w-full h-9 font-bold text-xs gap-1.5"
                 >
-                  <Filter className="h-4 w-4" /> Filter Inventory Table by This Date Only ({dateCyls.length} cylinders)
+                  <Filter className="h-4 w-4" /> Filter Inventory Table by This Date Only ({viewDateCyls.length} cylinders)
                 </Button>
               </div>
-            );
-          })()}
+            )}
         </DialogContent>
       </Dialog>
 
@@ -1744,30 +1780,8 @@ function MyCylindersContent() {
             </div>
 
             {/* TAB 1: REAL VISUAL MONTHLY CALENDAR GRID */}
-            {calTab === "calendar" && (() => {
-              const monthNames = [
-                "January", "February", "March", "April", "May", "June",
-                "July", "August", "September", "October", "November", "December"
-              ];
-              const firstDayIndex = new Date(calViewYear, calViewMonth, 1).getDay();
-              const daysInMonth = new Date(calViewYear, calViewMonth + 1, 0).getDate();
-
-              const days = [];
-              for (let i = 0; i < firstDayIndex; i++) days.push(null);
-              for (let d = 1; d <= daysInMonth; d++) {
-                const dateStr = `${calViewYear}-${String(calViewMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-                days.push({ dayNum: d, dateStr });
-              }
-
-              // Mapping purchase dates to count
-              const purchaseMap: Record<string, number> = {};
-              cylinders.forEach((c) => {
-                const d = safeSlice10(c.purchased_at) || safeSlice10(c.created_at);
-                if (d) purchaseMap[d] = (purchaseMap[d] || 0) + 1;
-              });
-
-              return (
-                <div className="space-y-3 p-3 rounded-xl border border-border/70 bg-card/60 shadow-xs">
+            {calTab === "calendar" && (
+              <div className="space-y-3 p-3 rounded-xl border border-border/70 bg-card/60 shadow-xs">
                   {/* Month Navigation */}
                   <div className="flex items-center justify-between">
                     <Button
@@ -1892,8 +1906,7 @@ function MyCylindersContent() {
                     })}
                   </div>
                 </div>
-              );
-            })()}
+            )}
 
             {/* TAB 2: PRESETS & RANGE */}
             {calTab === "presets" && (
@@ -1997,21 +2010,8 @@ function MyCylindersContent() {
             )}
 
             {/* TAB 3: BATCHES LIST */}
-            {calTab === "batches" && (() => {
-              const allDatesMap: Record<string, { count: number; suppliers: string[] }> = {};
-              cylinders.forEach((c) => {
-                const d = safeSlice10(c.purchased_at) || safeSlice10(c.created_at);
-                if (!d) return;
-                if (!allDatesMap[d]) allDatesMap[d] = { count: 0, suppliers: [] };
-                allDatesMap[d].count += 1;
-                const supp = getCylMeta(c).supplier_name;
-                if (supp !== "—" && !allDatesMap[d].suppliers.includes(supp)) allDatesMap[d].suppliers.push(supp);
-              });
-
-              const sortedDates = Object.keys(allDatesMap).sort((a, b) => b.localeCompare(a));
-
-              return (
-                <div className="space-y-2.5 p-3 rounded-xl border border-border/70 bg-card/60">
+            {calTab === "batches" && (
+              <div className="space-y-2.5 p-3 rounded-xl border border-border/70 bg-card/60">
                   <div className="flex items-center justify-between text-xs font-bold text-foreground">
                     <span>Available Purchase Dates ({sortedDates.length})</span>
                     <div className="flex gap-2">
@@ -2065,8 +2065,7 @@ function MyCylindersContent() {
                     })}
                   </div>
                 </div>
-              );
-            })()}
+            )}
 
             {/* Selected Dates Summary Badges */}
             {selectedDates.length > 0 && (
