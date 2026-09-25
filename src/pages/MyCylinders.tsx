@@ -7,11 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Database, Plus, Search, Filter, AlertTriangle, DollarSign,
   CheckCircle2, Flame, Circle, Pencil, Trash2, Tag, ArrowUpRight,
-  Package, Calendar, Truck, UserCheck, ShieldAlert, ShoppingBag
+  Package, Calendar, Truck, UserCheck, ShieldAlert, ShoppingBag, Hash
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -216,14 +217,14 @@ function MyCylindersContent() {
     manufacture_year: String(new Date().getFullYear()),
   });
 
-  const [batchRows, setBatchRows] = useState<Array<{ id: string; type_id: string; cylinder_numbers: string }>>([
-    { id: "batch-1", type_id: "", cylinder_numbers: "" },
+  const [batchRows, setBatchRows] = useState<Array<{ id: string; type_id: string; cylinder_numbers: string; serial_numbers: string }>>([
+    { id: "batch-1", type_id: "", cylinder_numbers: "", serial_numbers: "" },
   ]);
 
   const addBatchRow = () => {
     setBatchRows((prev) => [
       ...prev,
-      { id: `batch-${Date.now()}-${prev.length + 1}`, type_id: "", cylinder_numbers: "" },
+      { id: `batch-${Date.now()}-${prev.length + 1}`, type_id: "", cylinder_numbers: "", serial_numbers: "" },
     ]);
   };
 
@@ -232,7 +233,7 @@ function MyCylindersContent() {
     setBatchRows((prev) => prev.filter((r) => r.id !== id));
   };
 
-  const updateBatchRow = (id: string, updates: Partial<{ type_id: string; cylinder_numbers: string }>) => {
+  const updateBatchRow = (id: string, updates: Partial<{ type_id: string; cylinder_numbers: string; serial_numbers: string }>) => {
     setBatchRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...updates } : r)));
   };
 
@@ -300,19 +301,36 @@ function MyCylindersContent() {
 
   // ── SAVE MULTI-BATCH NEW CYLINDERS ──
   const handleAddBatchCylinders = async () => {
-    const validRows = batchRows.filter((r) => r.type_id && r.cylinder_numbers.trim());
+    const validRows = batchRows.filter((r) => r.type_id && (r.cylinder_numbers.trim() || r.serial_numbers.trim()));
     if (validRows.length === 0) {
-      return toast.error("Please select a gas type and enter cylinder numbers for at least one batch");
+      return toast.error("Please select a gas type and enter cylinder numbers or serial numbers for at least one batch");
     }
 
     let createdCount = 0;
 
     for (const r of validRows) {
-      const parsedNums = parseBatchCylinderNumbers(r.cylinder_numbers);
-      for (const rawNum of parsedNums) {
-        const isPure = /^\d+$/.test(rawNum);
-        const cylNum = isPure ? parseInt(rawNum, 10) : null;
-        const serialNum = isPure ? `CYL-${rawNum.padStart(4, "0")}` : rawNum.toUpperCase();
+      const parsedCyl = parseBatchCylinderNumbers(r.cylinder_numbers);
+      const parsedSer = parseBatchCylinderNumbers(r.serial_numbers);
+      const count = Math.max(parsedCyl.length, parsedSer.length);
+      const rawSerialPrefix = r.serial_numbers.trim();
+
+      for (let i = 0; i < count; i++) {
+        const cylNumStr = parsedCyl[i] || (parsedSer[i] ? parsedSer[i].replace(/[^0-9]/g, "") : "");
+        const isPure = /^\d+$/.test(cylNumStr);
+        const cylNum = isPure ? parseInt(cylNumStr, 10) : null;
+
+        let serialNum = "";
+        if (parsedSer[i]) {
+          serialNum = parsedSer[i];
+        } else if (rawSerialPrefix && cylNumStr) {
+          serialNum = rawSerialPrefix.endsWith("-") || rawSerialPrefix.endsWith("_")
+            ? `${rawSerialPrefix.toUpperCase()}${cylNumStr}`
+            : `${rawSerialPrefix.toUpperCase()}-${cylNumStr}`;
+        } else if (cylNumStr) {
+          serialNum = isPure ? `CYL-${cylNumStr.padStart(4, "0")}` : cylNumStr.toUpperCase();
+        } else {
+          serialNum = `SN-${Date.now()}-${i + 1}`;
+        }
 
         const meta = {
           supplier_name: addFormHeader.supplier_name.trim() || "—",
@@ -361,7 +379,7 @@ function MyCylindersContent() {
       batch_number: "",
       manufacture_year: String(new Date().getFullYear()),
     });
-    setBatchRows([{ id: "batch-1", type_id: "", cylinder_numbers: "" }]);
+    setBatchRows([{ id: "batch-1", type_id: "", cylinder_numbers: "", serial_numbers: "" }]);
     loadData();
   };
 
@@ -969,7 +987,9 @@ function MyCylindersContent() {
               </div>
 
               {batchRows.map((r, idx) => {
-                const parsedCount = parseBatchCylinderNumbers(r.cylinder_numbers).length;
+                const parsedCyl = parseBatchCylinderNumbers(r.cylinder_numbers);
+                const parsedSer = parseBatchCylinderNumbers(r.serial_numbers);
+                const totalCount = Math.max(parsedCyl.length, parsedSer.length);
                 const selType = types.find((t) => t.id === r.type_id);
                 return (
                   <div
@@ -994,35 +1014,69 @@ function MyCylindersContent() {
                       )}
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <Label className="text-xs font-semibold">Gas / Cylinder Type *</Label>
-                        <Select value={r.type_id} onValueChange={(v) => updateBatchRow(r.id, { type_id: v })}>
-                          <SelectTrigger className="mt-1 h-9 text-xs"><SelectValue placeholder="Select type" /></SelectTrigger>
-                          <SelectContent>
-                            {types.map((t) => (
-                              <SelectItem key={t.id} value={t.id}>{t.code} — {t.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                    <div>
+                      <Label className="text-xs font-semibold">Gas / Cylinder Type *</Label>
+                      <Select value={r.type_id} onValueChange={(v) => updateBatchRow(r.id, { type_id: v })}>
+                        <SelectTrigger className="mt-1 h-9 text-xs"><SelectValue placeholder="Select type" /></SelectTrigger>
+                        <SelectContent>
+                          {types.map((t) => (
+                            <SelectItem key={t.id} value={t.id}>{t.code} — {t.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-                      <div>
-                        <Label className="text-xs font-bold text-emerald-400">Cylinder Numbers / Ranges *</Label>
+                    {/* Tabs for Cylinder Numbers vs Serial Numbers */}
+                    <Tabs defaultValue="cyl" className="w-full pt-1">
+                      <TabsList className="grid grid-cols-2 w-full h-8 bg-secondary/60 p-0.5">
+                        <TabsTrigger value="cyl" className="text-[11px] font-bold py-1 flex items-center gap-1.5">
+                          <Hash className="h-3 w-3 text-primary" />
+                          Cylinder Numbers Tab
+                        </TabsTrigger>
+                        <TabsTrigger value="serial" className="text-[11px] font-bold py-1 flex items-center gap-1.5">
+                          <Tag className="h-3 w-3 text-emerald-400" />
+                          Serial Numbers Tab
+                        </TabsTrigger>
+                      </TabsList>
+
+                      <TabsContent value="cyl" className="mt-2 space-y-1">
+                        <Label className="text-xs font-semibold flex items-center justify-between">
+                          <span>Cylinder Numbers / Ranges (Manual Internal #)</span>
+                          <span className="text-[10px] text-muted-foreground font-normal">e.g. 101-150 or 101, 102</span>
+                        </Label>
                         <Textarea
                           value={r.cylinder_numbers}
                           onChange={(e) => updateBatchRow(r.id, { cylinder_numbers: e.target.value })}
                           onKeyDown={(e) => handleSpaceAutoComma(e, r.cylinder_numbers, (v) => updateBatchRow(r.id, { cylinder_numbers: v }))}
-                          placeholder="e.g. 201-220, A101-A120"
+                          placeholder="e.g. 101-150, 201-220, or 101, 102, 103"
                           rows={2}
                           className="font-mono text-xs mt-1"
                         />
-                      </div>
-                    </div>
+                      </TabsContent>
 
-                    {parsedCount > 0 && (
-                      <div className="text-[10px] font-mono text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20 w-fit">
-                        ✅ {parsedCount} cylinder(s) parsed for this type
+                      <TabsContent value="serial" className="mt-2 space-y-1">
+                        <Label className="text-xs font-semibold flex items-center justify-between">
+                          <span>Mfg Serial Numbers / Ranges / Prefix (Factory Serial)</span>
+                          <span className="text-[10px] text-muted-foreground font-normal">e.g. SN-101 to SN-150 or SN-</span>
+                        </Label>
+                        <Textarea
+                          value={r.serial_numbers}
+                          onChange={(e) => updateBatchRow(r.id, { serial_numbers: e.target.value })}
+                          onKeyDown={(e) => handleSpaceAutoComma(e, r.serial_numbers, (v) => updateBatchRow(r.id, { serial_numbers: v }))}
+                          placeholder="e.g. SN-101 to SN-150, SN-001, SN-002, or prefix SN-"
+                          rows={2}
+                          className="font-mono text-xs mt-1"
+                        />
+                      </TabsContent>
+                    </Tabs>
+
+                    {totalCount > 0 && (
+                      <div className="text-[11px] font-mono text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20 flex flex-wrap items-center justify-between gap-1">
+                        <span>
+                          ✅ <strong>{totalCount} cylinder(s) parsed:</strong>{" "}
+                          {parsedCyl.length > 0 && `Cyl #${parsedCyl[0]}${parsedCyl.length > 1 ? `...#${parsedCyl[parsedCyl.length - 1]}` : ''}`}
+                          {parsedSer.length > 0 && ` | Serial ${parsedSer[0]}${parsedSer.length > 1 ? `...${parsedSer[parsedSer.length - 1]}` : ''}`}
+                        </span>
                       </div>
                     )}
                   </div>
