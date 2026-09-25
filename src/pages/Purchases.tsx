@@ -31,6 +31,7 @@ export type PaymentInstallment = {
 };
 
 function parseBatchCylinderNumbers(input: string): string[] {
+  if (!input || typeof input !== "string") return [];
   const result: Set<string> = new Set();
   const parts = input.split(/[,;\n]+/);
 
@@ -186,7 +187,7 @@ export default function Purchases() {
   const [viewing, setViewing] = useState<any | null>(null);
 
   // Batch Add Cylinders Multi-Type State
-  type BatchRow = { id: string; input: string; type_id: string; rate: string; fill_status: "filled" | "empty" };
+  type BatchRow = { id: string; cyl_input: string; serial_input: string; type_id: string; rate: string; fill_status: "filled" | "empty" };
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchRows, setBatchRows] = useState<BatchRow[]>([]);
 
@@ -293,7 +294,8 @@ export default function Purchases() {
     setBatchRows([
       {
         id: "b-1",
-        input: "",
+        cyl_input: "",
+        serial_input: "",
         type_id: initialType,
         rate: selType?.price ? String(selType.price) : "",
         fill_status: "filled",
@@ -309,7 +311,8 @@ export default function Purchases() {
       ...curr,
       {
         id: `b-${Date.now()}-${curr.length + 1}`,
-        input: "",
+        cyl_input: "",
+        serial_input: "",
         type_id: defaultType,
         rate: selType?.price ? String(selType.price) : "",
         fill_status: "filled",
@@ -346,42 +349,61 @@ export default function Purchases() {
     for (let idx = 0; idx < batchRows.length; idx++) {
       const row = batchRows[idx];
       if (!row.type_id) return toast.error(`Select cylinder type for Batch #${idx + 1}`);
-      const cylNums = parseBatchCylinderNumbers(row.input);
-      if (cylNums.length === 0) {
-        if (batchRows.length === 1) return toast.error("Enter valid cylinder numbers or ranges (e.g. 101-130)");
+
+      const cylNums = parseBatchCylinderNumbers(row.cyl_input);
+      const serialNums = parseBatchCylinderNumbers(row.serial_input);
+
+      if (cylNums.length === 0 && serialNums.length === 0) {
+        if (batchRows.length === 1) return toast.error("Enter cylinder numbers or serial numbers (e.g. 101-130)");
         continue;
       }
 
+      const count = Math.max(cylNums.length, serialNums.length);
       const selType = types.find((t) => t.id === row.type_id);
       const rateToUse = row.rate.trim() || (selType?.price ? String(selType.price) : "0");
       const hsnToUse = selType?.hsn_code ?? "";
+      const rawSerialPrefix = row.serial_input.trim();
 
-      for (const item of cylNums) {
-        let serial = item;
-        const numVal = parseInt(item, 10);
-        if (!isNaN(numVal) && cylindersCache.has(numVal)) {
-          serial = cylindersCache.get(numVal)!.serial_number;
-        } else if (/^\d+$/.test(item)) {
-          serial = `CYL-${item.padStart(4, "0")}`;
+      for (let i = 0; i < count; i++) {
+        const cylNumStr = cylNums[i] || (serialNums[i] ? serialNums[i].replace(/[^0-9]/g, "") : "");
+        
+        let serialStr = "";
+        if (serialNums[i]) {
+          serialStr = serialNums[i];
+        } else if (rawSerialPrefix && cylNumStr) {
+          serialStr = rawSerialPrefix.endsWith("-") || rawSerialPrefix.endsWith("_")
+            ? `${rawSerialPrefix.toUpperCase()}${cylNumStr}`
+            : `${rawSerialPrefix.toUpperCase()}-${cylNumStr}`;
+        } else if (cylNumStr) {
+          const numVal = parseInt(cylNumStr, 10);
+          if (!isNaN(numVal) && cylindersCache.has(numVal)) {
+            serialStr = cylindersCache.get(numVal)!.serial_number;
+          } else {
+            serialStr = `SN-${cylNumStr.padStart(4, "0")}`;
+          }
+        } else {
+          serialStr = `SN-${Date.now()}-${i + 1}`;
         }
+
         allNewLines.push({
-          cylinder_number: item,
-          serial_number: serial,
+          cylinder_number: cylNumStr,
+          serial_number: serialStr,
           type_id: row.type_id,
           hsn_code: hsnToUse,
           rate: rateToUse,
           fill_status: row.fill_status,
         });
       }
-      totalCount += cylNums.length;
+      totalCount += count;
     }
 
-    if (allNewLines.length === 0) return toast.error("Enter valid cylinder numbers or ranges (e.g. 101-130)");
+    if (allNewLines.length === 0) return toast.error("Enter valid cylinder numbers or serial numbers (e.g. 101-130)");
 
     setLines((curr) => [...curr, ...allNewLines]);
     toast.success(`Added ${totalCount} cylinders across ${batchRows.length} gas type(s) to purchase bill ✓`);
     setBatchOpen(false);
   };
+
 
   const updateLine = (idx: number, patch: Partial<Line>) => {
     setLines((curr) => curr.map((l, i) => {
@@ -652,6 +674,28 @@ export default function Purchases() {
     setViewing({ ...p, items: data ?? [] });
   };
 
+  const deletePurchase = async (p: any) => {
+    const pNumStr = p.purchase_number ? `#${p.purchase_number}` : p.bill_number ? `Bill #${p.bill_number}` : "bill";
+    if (!confirm(`Are you sure you want to delete purchase ${pNumStr}? This will permanently remove the bill record and associated line items.`)) {
+      return;
+    }
+
+    const { error: itemsErr } = await supabase.from("purchase_items").delete().eq("purchase_id", p.id);
+    if (itemsErr) {
+      console.error("Error deleting purchase items:", itemsErr);
+    }
+
+    const { error } = await supabase.from("purchases").delete().eq("id", p.id);
+    if (error) return toast.error(error.message || "Failed to delete purchase bill");
+
+    toast.success(`Purchase bill ${pNumStr} deleted successfully ✓`);
+    if (viewing && viewing.id === p.id) {
+      setViewing(null);
+    }
+    load();
+    loadCylindersCache();
+  };
+
   const totalSpend = items.reduce((a, b) => a + Number(b.total), 0);
   const totalPaid = items.reduce((a, b) => a + getPaymentHistory(b).paid, 0);
   const totalBalance = items.reduce((a, b) => a + getPaymentHistory(b).balance, 0);
@@ -750,18 +794,18 @@ export default function Purchases() {
                     {lines.map((l, i) => (
                       <div key={i} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end p-3 rounded-lg border border-border/60 bg-secondary/30">
                         <div className="sm:col-span-3">
-                          <Label className="text-[10px]">Cyl #</Label>
+                          <Label className="text-[10px]">Cylinder # (Manual Entry)</Label>
                           <Input
                             type="number" min={1}
                             value={l.cylinder_number}
                             onChange={(e) => updateLine(i, { cylinder_number: e.target.value })}
-                            placeholder="e.g. 42"
+                            placeholder="e.g. 101 (Manual #)"
                             className="font-mono"
                           />
                         </div>
                         <div className="sm:col-span-3">
-                          <Label className="text-[10px]">Serial # (Auto-filled)</Label>
-                          <Input value={l.serial_number} onChange={(e) => updateLine(i, { serial_number: e.target.value })} placeholder="CYL-..." />
+                          <Label className="text-[10px]">Mfg Serial # (Factory Serial)</Label>
+                          <Input value={l.serial_number} onChange={(e) => updateLine(i, { serial_number: e.target.value })} placeholder="e.g. SN-9842 (Mfg Serial)" />
                         </div>
                         <div className="sm:col-span-2">
                           <Label className="text-[10px]">Type</Label>
@@ -1031,7 +1075,16 @@ export default function Purchases() {
                             2nd Half
                           </Button>
                         )}
-                        <Button size="sm" variant="ghost" onClick={() => viewDetails(p)}><Eye className="h-4 w-4" /></Button>
+                        <Button size="sm" variant="ghost" onClick={() => viewDetails(p)} title="View Details"><Eye className="h-4 w-4" /></Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => deletePurchase(p)}
+                          title="Delete Purchase Bill"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
                     </td>
                   </tr>
@@ -1152,13 +1205,23 @@ export default function Purchases() {
                 <DialogHeader>
                   <DialogTitle className="flex items-center justify-between">
                     <span>{viewing.purchase_number}</span>
-                    {history.status === "paid" ? (
-                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-foreground/10 text-foreground border border-foreground/20">Fully Paid</span>
-                    ) : history.status === "partial" ? (
-                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-foreground/10 text-foreground border border-foreground/20">Partial Paid</span>
-                    ) : (
-                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-foreground/10 text-foreground border border-foreground/20">Unpaid</span>
-                    )}
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-destructive border-destructive/30 hover:bg-destructive/10 text-xs h-8"
+                        onClick={() => deletePurchase(viewing)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete Bill
+                      </Button>
+                      {history.status === "paid" ? (
+                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-foreground/10 text-foreground border border-foreground/20">Fully Paid</span>
+                      ) : history.status === "partial" ? (
+                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-foreground/10 text-foreground border border-foreground/20">Partial Paid</span>
+                      ) : (
+                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-foreground/10 text-foreground border border-foreground/20">Unpaid</span>
+                      )}
+                    </div>
                   </DialogTitle>
                 </DialogHeader>
 
@@ -1297,15 +1360,17 @@ export default function Purchases() {
 
             <div className="space-y-4">
               {batchRows.map((row, idx) => {
-                const parsed = parseBatchCylinderNumbers(row.input);
+                const parsedCyl = parseBatchCylinderNumbers(row.cyl_input);
+                const parsedSer = parseBatchCylinderNumbers(row.serial_input);
+                const totalCount = Math.max(parsedCyl.length, parsedSer.length);
                 return (
                   <div key={row.id || idx} className="rounded-xl border border-border/60 bg-secondary/20 p-4 space-y-3.5 relative">
                     <div className="flex items-center justify-between border-b border-border/40 pb-2">
                       <span className="text-xs font-bold text-primary uppercase tracking-wider flex items-center gap-1.5">
                         <Layers className="h-3.5 w-3.5" /> Batch Row #{idx + 1}
-                        {parsed.length > 0 && (
+                        {totalCount > 0 && (
                           <span className="bg-emerald-500/15 text-emerald-400 font-mono font-extrabold text-[10px] px-2.5 py-0.5 rounded-full border border-emerald-500/30">
-                            {parsed.length} cylinders
+                            {totalCount} cylinders
                           </span>
                         )}
                       </span>
@@ -1375,32 +1440,57 @@ export default function Purchases() {
                       </div>
                     </div>
 
-                    <div>
-                      <Label className="text-xs font-semibold">Cylinder Numbers / Ranges *</Label>
-                      <Textarea
-                        value={row.input}
-                        onChange={(e) => updateBatchRow(idx, { input: e.target.value })}
-                        onKeyDown={(e) => handleSpaceAutoComma(e, row.input, (v) => updateBatchRow(idx, { input: v }))}
-                        placeholder="e.g. A101-A150, B101-130, or A1, A2, B3"
-                        rows={2}
-                        className="font-mono text-xs mt-1"
-                      />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <Label className="text-xs font-semibold flex items-center justify-between">
+                          <span>Cylinder # / Ranges (Manual Entry)</span>
+                          <span className="text-[10px] text-muted-foreground font-normal">e.g. 101-150</span>
+                        </Label>
+                        <Textarea
+                          value={row.cyl_input}
+                          onChange={(e) => updateBatchRow(idx, { cyl_input: e.target.value })}
+                          onKeyDown={(e) => handleSpaceAutoComma(e, row.cyl_input, (v) => updateBatchRow(idx, { cyl_input: v }))}
+                          placeholder="Manual numbers (e.g. 101-150, 201-220, or 101, 102)"
+                          rows={2}
+                          className="font-mono text-xs mt-1"
+                        />
+                      </div>
+
+                      <div>
+                        <Label className="text-xs font-semibold flex items-center justify-between">
+                          <span>Mfg Serial # / Ranges / Prefix</span>
+                          <span className="text-[10px] text-muted-foreground font-normal">e.g. SN-101-150 or SN-</span>
+                        </Label>
+                        <Textarea
+                          value={row.serial_input}
+                          onChange={(e) => updateBatchRow(idx, { serial_input: e.target.value })}
+                          onKeyDown={(e) => handleSpaceAutoComma(e, row.serial_input, (v) => updateBatchRow(idx, { serial_input: v }))}
+                          placeholder="Mfg serial numbers (e.g. SN-101 to SN-150, MFG-900, or prefix SN-)"
+                          rows={2}
+                          className="font-mono text-xs mt-1"
+                        />
+                      </div>
                     </div>
 
-                    {row.input.trim() && (
-                      <div className="text-[11px] font-mono font-semibold bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-2.5 py-1.5 rounded-md flex items-center gap-1.5">
-                        {parsed.length === 0 ? (
-                          <span className="text-rose-400">⚠️ Enter numbers like 101-110 or 101, 102</span>
-                        ) : (
-                          <span>
-                            ✅ <strong>{parsed.length} cylinders parsed:</strong>{" "}
-                            {parsed.length > 8
-                              ? `${parsed.slice(0, 5).map((n) => `#${n}`).join(", ")} ... ${parsed.slice(-2).map((n) => `#${n}`).join(", ")}`
-                              : parsed.map((n) => `#${n}`).join(", ")}
-                          </span>
-                        )}
-                      </div>
-                    )}
+                    {(row.cyl_input.trim() || row.serial_input.trim()) && (() => {
+                      const parsedCyl = parseBatchCylinderNumbers(row.cyl_input);
+                      const parsedSer = parseBatchCylinderNumbers(row.serial_input);
+                      const totalCount = Math.max(parsedCyl.length, parsedSer.length);
+
+                      return (
+                        <div className="text-[11px] font-mono font-semibold bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-2.5 py-1.5 rounded-md flex flex-wrap items-center justify-between gap-1">
+                          {totalCount === 0 ? (
+                            <span className="text-rose-400">⚠️ Enter valid numbers like 101-110 or SN-101 to SN-110</span>
+                          ) : (
+                            <span>
+                              ✅ <strong>{totalCount} cylinders parsed:</strong>{" "}
+                              {parsedCyl.length > 0 && `Cyl #${parsedCyl[0]}${parsedCyl.length > 1 ? `...#${parsedCyl[parsedCyl.length - 1]}` : ''}`}
+                              {parsedSer.length > 0 && ` | Serial ${parsedSer[0]}${parsedSer.length > 1 ? `...${parsedSer[parsedSer.length - 1]}` : ''}`}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
@@ -1412,7 +1502,7 @@ export default function Purchases() {
               </Button>
               {(() => {
                 const grandTotal = batchRows.reduce(
-                  (sum, r) => sum + parseBatchCylinderNumbers(r.input).length,
+                  (sum, r) => sum + Math.max(parseBatchCylinderNumbers(r.cyl_input).length, parseBatchCylinderNumbers(r.serial_input).length),
                   0
                 );
                 return (

@@ -7,7 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Pencil, Search, Phone, MapPin, Wallet, AlertTriangle, Upload } from "lucide-react";
+import { Plus, Trash2, Pencil, Search, Phone, MapPin, Wallet, AlertTriangle, Upload, Calendar } from "lucide-react";
+
 import { toast } from "sonner";
 import { useCompany } from "@/hooks/useCompany";
 
@@ -20,7 +21,7 @@ export default function Customers() {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<any | null>(null);
-  const [form, setForm] = useState({ name: "", phone: "", email: "", gst_number: "", address: "", notes: "", initial_deposit: "0", deposit_notes: "" });
+  const [form, setForm] = useState({ name: "", phone: "", email: "", gst_number: "", address: "", notes: "", initial_deposit: "0", deposit_notes: "", created_at: new Date().toISOString().slice(0, 10) });
 
   // Deposit dialog
   const [depOpen, setDepOpen] = useState(false);
@@ -152,8 +153,26 @@ export default function Customers() {
   };
   useEffect(() => { load(); }, [company]);
 
-  const openNew = () => { setEdit(null); setForm({ name: "", phone: "", email: "", gst_number: "", address: "", notes: "", initial_deposit: "0", deposit_notes: "" }); setOpen(true); };
-  const openEdit = (c: any) => { setEdit(c); setForm({ name: c.name, phone: c.phone ?? "", email: c.email ?? "", gst_number: c.gst_number ?? "", address: c.address ?? "", notes: c.notes ?? "", initial_deposit: "0", deposit_notes: "" }); setOpen(true); };
+  const openNew = () => { 
+    setEdit(null); 
+    setForm({ name: "", phone: "", email: "", gst_number: "", address: "", notes: "", initial_deposit: "0", deposit_notes: "", created_at: new Date().toISOString().slice(0, 10) }); 
+    setOpen(true); 
+  };
+  const openEdit = (c: any) => { 
+    setEdit(c); 
+    setForm({ 
+      name: c.name, 
+      phone: c.phone ?? "", 
+      email: c.email ?? "", 
+      gst_number: c.gst_number ?? "", 
+      address: c.address ?? "", 
+      notes: c.notes ?? "", 
+      initial_deposit: "0", 
+      deposit_notes: "",
+      created_at: c.created_at ? new Date(c.created_at).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)
+    }); 
+    setOpen(true); 
+  };
 
   const save = async () => {
     if (!form.name.trim()) return toast.error("Name required");
@@ -164,6 +183,7 @@ export default function Customers() {
       gst_number: form.gst_number.trim() || null,
       address: form.address.trim() || null,
       notes: form.notes.trim() || null,
+      created_at: form.created_at ? new Date(form.created_at).toISOString() : new Date().toISOString(),
       company,
     };
     
@@ -183,7 +203,7 @@ export default function Customers() {
         customer_id: result.data.id,
         type: "collected",
         amount: depAmt,
-        occurred_at: new Date().toISOString(),
+        occurred_at: form.created_at ? new Date(form.created_at).toISOString() : new Date().toISOString(),
         notes: form.deposit_notes.trim() || "Initial connection deposit",
       });
       if (depError) {
@@ -194,6 +214,7 @@ export default function Customers() {
         }).catch(() => {});
       }
     }
+
     
     toast.success("Saved");
     setOpen(false);
@@ -291,7 +312,10 @@ export default function Customers() {
                   <div><Label>Phone</Label><Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+91..." /></div>
                   <div><Label>Email</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
                 </div>
-                <div><Label>GST number</Label><Input value={form.gst_number} onChange={(e) => setForm({ ...form, gst_number: e.target.value })} placeholder="22AAAAA0000A1Z5" /></div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div><Label>GST number</Label><Input value={form.gst_number} onChange={(e) => setForm({ ...form, gst_number: e.target.value })} placeholder="22AAAAA0000A1Z5" /></div>
+                  <div><Label>Joining / Connection Date</Label><Input type="date" value={form.created_at} onChange={(e) => setForm({ ...form, created_at: e.target.value })} /></div>
+                </div>
                 <div><Label>Address</Label><Textarea value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></div>
                 <div><Label>Notes</Label><Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
                 {!edit && (
@@ -345,6 +369,12 @@ export default function Customers() {
               <div className="space-y-2 text-sm">
                 {c.phone && <div className="flex items-center gap-2 text-muted-foreground"><Phone className="h-3.5 w-3.5" /><span className="font-mono">{c.phone}</span></div>}
                 {c.address && <div className="flex items-start gap-2 text-muted-foreground"><MapPin className="h-3.5 w-3.5 mt-0.5" /><span>{c.address}</span></div>}
+                {c.created_at && (
+                  <div className="flex items-center gap-2 text-muted-foreground text-xs">
+                    <Calendar className="h-3.5 w-3.5 text-primary/70" />
+                    <span>Joined {new Date(c.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span>
+                  </div>
+                )}
               </div>
               <div className="mt-4 pt-3 border-t border-border/40 flex items-center justify-between">
                 <span className="text-[10px] uppercase tracking-widest text-muted-foreground">Deposit balance</span>

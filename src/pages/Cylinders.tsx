@@ -265,23 +265,23 @@ export default function Cylinders() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label className="text-xs text-muted-foreground flex items-center gap-1.5 mb-1">
-                      <Hash className="h-3.5 w-3.5" /> Cylinder # *
+                      <Hash className="h-3.5 w-3.5" /> Cylinder # (Manual Entry) *
                     </Label>
                     <Input
                       type="number"
                       min={1}
                       value={buyForm.cylinder_number}
                       onChange={(e) => setBuyForm({ ...buyForm, cylinder_number: e.target.value })}
-                      placeholder="e.g. 101"
+                      placeholder="e.g. 101 (Manual #)"
                       className="font-mono"
                     />
                   </div>
                   <div>
-                    <Label className="text-xs text-muted-foreground mb-1 block">Serial # (optional)</Label>
+                    <Label className="text-xs text-muted-foreground mb-1 block">Mfg Serial # (Factory Serial)</Label>
                     <Input
                       value={buyForm.serial_number}
                       onChange={(e) => setBuyForm({ ...buyForm, serial_number: e.target.value })}
-                      placeholder="CYL-0101"
+                      placeholder="e.g. SN-9842 (Mfg Serial)"
                       className="font-mono"
                     />
                   </div>
@@ -352,12 +352,12 @@ export default function Cylinders() {
               <div className="space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <Label>Cylinder #</Label>
-                    <Input type="number" min={1} value={form.cylinder_number} onChange={(e) => setForm({ ...form, cylinder_number: e.target.value })} placeholder="e.g. 42" className="font-mono" />
+                    <Label>Cylinder # (Manual Entry)</Label>
+                    <Input type="number" min={1} value={form.cylinder_number} onChange={(e) => setForm({ ...form, cylinder_number: e.target.value })} placeholder="e.g. 101" className="font-mono" />
                   </div>
                   <div>
-                    <Label>Serial number</Label>
-                    <Input value={form.serial_number} onChange={(e) => setForm({ ...form, serial_number: e.target.value })} placeholder="CYL-0001 (auto if empty)" />
+                    <Label>Mfg Serial # (Factory Serial)</Label>
+                    <Input value={form.serial_number} onChange={(e) => setForm({ ...form, serial_number: e.target.value })} placeholder="e.g. SN-9842" />
                   </div>
                 </div>
                 <div>
