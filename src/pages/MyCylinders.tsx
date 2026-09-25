@@ -672,16 +672,6 @@ function MyCylindersContent() {
     return matchesSearch && matchesStatus && matchesType && matchesFill && matchesDate;
   });
 
-  if (loading) {
-    return (
-      <div className="p-8 flex flex-col items-center justify-center min-h-[60vh] space-y-3">
-        <Database className="h-10 w-10 text-primary animate-bounce" />
-        <div className="text-sm font-extrabold text-foreground">Loading Cylinder Inventory...</div>
-        <div className="text-xs text-muted-foreground">Fetching records and database assets</div>
-      </div>
-    );
-  }
-
   // Calendar Grid Data
   const calendarData = useMemo(() => {
     const monthNames = [
@@ -735,6 +725,16 @@ function MyCylindersContent() {
       return d === viewDateModalDate;
     });
   }, [viewDateModalDate, cylinders]);
+
+  if (loading) {
+    return (
+      <div className="p-8 flex flex-col items-center justify-center min-h-[60vh] space-y-3">
+        <Database className="h-10 w-10 text-primary animate-bounce" />
+        <div className="text-sm font-extrabold text-foreground">Loading Cylinder Inventory...</div>
+        <div className="text-xs text-muted-foreground">Fetching records and database assets</div>
+      </div>
+    );
+  }
 
   // ── STAT COUNTS ──
   const totalCount = cylinders.length;
