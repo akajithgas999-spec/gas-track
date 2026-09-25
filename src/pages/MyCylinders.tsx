@@ -217,14 +217,57 @@ function MyCylindersContent() {
     manufacture_year: String(new Date().getFullYear()),
   });
 
-  const [batchRows, setBatchRows] = useState<Array<{ id: string; type_id: string; cylinder_numbers: string; serial_numbers: string }>>([
-    { id: "batch-1", type_id: "", cylinder_numbers: "", serial_numbers: "" },
+  type CylinderPair = { id: string; cylinder_number: string; serial_number: string };
+
+  type BatchRow = {
+    id: string;
+    type_id: string;
+    entry_mode: "itemized" | "bulk";
+    pairs: CylinderPair[];
+    cylinder_numbers: string;
+    serial_numbers: string;
+    auto_count: string;
+    auto_start_num: string;
+    auto_prefix: string;
+  };
+
+  function createInitialPairs(count: number = 5, startNum: number = 101, serialPrefix: string = "SN-"): CylinderPair[] {
+    const result: CylinderPair[] = [];
+    for (let i = 0; i < count; i++) {
+      const numStr = String(startNum + i);
+      const sPrefix = serialPrefix.trim() || "SN-";
+      const formattedSerial = sPrefix.endsWith("-") || sPrefix.endsWith("_") ? `${sPrefix}${numStr}` : `${sPrefix}-${numStr}`;
+      result.push({
+        id: `p-${Date.now()}-${i + 1}-${Math.random().toString(36).slice(2, 6)}`,
+        cylinder_number: numStr,
+        serial_number: formattedSerial,
+      });
+    }
+    return result;
+  }
+
+  function createInitialBatchRow(idStr?: string): BatchRow {
+    return {
+      id: idStr || `batch-${Date.now()}`,
+      type_id: "",
+      entry_mode: "itemized",
+      pairs: createInitialPairs(5, 101, "SN-"),
+      cylinder_numbers: "",
+      serial_numbers: "",
+      auto_count: "20",
+      auto_start_num: "101",
+      auto_prefix: "SN-",
+    };
+  }
+
+  const [batchRows, setBatchRows] = useState<BatchRow[]>([
+    createInitialBatchRow("batch-1"),
   ]);
 
   const addBatchRow = () => {
     setBatchRows((prev) => [
       ...prev,
-      { id: `batch-${Date.now()}-${prev.length + 1}`, type_id: "", cylinder_numbers: "", serial_numbers: "" },
+      createInitialBatchRow(`batch-${Date.now()}-${prev.length + 1}`),
     ]);
   };
 
@@ -233,8 +276,58 @@ function MyCylindersContent() {
     setBatchRows((prev) => prev.filter((r) => r.id !== id));
   };
 
-  const updateBatchRow = (id: string, updates: Partial<{ type_id: string; cylinder_numbers: string; serial_numbers: string }>) => {
+  const updateBatchRow = (id: string, updates: Partial<BatchRow>) => {
     setBatchRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...updates } : r)));
+  };
+
+  const addPairsToBatch = (batchId: string, countToAdd: number = 1) => {
+    setBatchRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== batchId) return r;
+        const lastPair = r.pairs[r.pairs.length - 1];
+        const lastNum = lastPair ? parseInt(lastPair.cylinder_number, 10) : 100;
+        const startNum = !isNaN(lastNum) ? lastNum + 1 : 101;
+        const newPairs = createInitialPairs(countToAdd, startNum, r.auto_prefix || "SN-");
+        return { ...r, pairs: [...r.pairs, ...newPairs] };
+      })
+    );
+  };
+
+  const generateAutoFillForBatch = (batchId: string) => {
+    setBatchRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== batchId) return r;
+        const count = Math.min(200, Math.max(1, parseInt(r.auto_count, 10) || 20));
+        const startNum = parseInt(r.auto_start_num, 10) || 101;
+        const prefix = r.auto_prefix || "SN-";
+        const newPairs = createInitialPairs(count, startNum, prefix);
+        return { ...r, pairs: newPairs };
+      })
+    );
+  };
+
+  const updatePairInBatch = (batchId: string, pairId: string, patch: Partial<CylinderPair>) => {
+    setBatchRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== batchId) return r;
+        return {
+          ...r,
+          pairs: r.pairs.map((p) => (p.id === pairId ? { ...p, ...patch } : p)),
+        };
+      })
+    );
+  };
+
+  const removePairFromBatch = (batchId: string, pairId: string) => {
+    setBatchRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== batchId) return r;
+        return {
+          ...r,
+          pairs: r.pairs.filter((p) => p.id !== pairId),
+        };
+      })
+    );
   };
 
   // Sell Cylinder Form State
@@ -301,35 +394,57 @@ function MyCylindersContent() {
 
   // ── SAVE MULTI-BATCH NEW CYLINDERS ──
   const handleAddBatchCylinders = async () => {
-    const validRows = batchRows.filter((r) => r.type_id && (r.cylinder_numbers.trim() || r.serial_numbers.trim()));
+    const validRows = batchRows.filter((r) => {
+      if (!r.type_id) return false;
+      if (r.entry_mode === "itemized") {
+        return r.pairs.some((p) => p.cylinder_number.trim() || p.serial_number.trim());
+      }
+      return r.cylinder_numbers.trim() || r.serial_numbers.trim();
+    });
+
     if (validRows.length === 0) {
-      return toast.error("Please select a gas type and enter cylinder numbers or serial numbers for at least one batch");
+      return toast.error("Please select a gas type and enter cylinder/serial numbers for at least one batch");
     }
 
     let createdCount = 0;
 
     for (const r of validRows) {
-      const parsedCyl = parseBatchCylinderNumbers(r.cylinder_numbers);
-      const parsedSer = parseBatchCylinderNumbers(r.serial_numbers);
-      const count = Math.max(parsedCyl.length, parsedSer.length);
-      const rawSerialPrefix = r.serial_numbers.trim();
+      const itemsToProcess: Array<{ cylNumStr: string; serialNumStr: string }> = [];
 
-      for (let i = 0; i < count; i++) {
-        const cylNumStr = parsedCyl[i] || (parsedSer[i] ? parsedSer[i].replace(/[^0-9]/g, "") : "");
+      if (r.entry_mode === "itemized") {
+        for (const p of r.pairs) {
+          const cStr = p.cylinder_number.trim();
+          const sStr = p.serial_number.trim();
+          if (cStr || sStr) {
+            itemsToProcess.push({ cylNumStr: cStr, serialNumStr: sStr });
+          }
+        }
+      } else {
+        const parsedCyl = parseBatchCylinderNumbers(r.cylinder_numbers);
+        const parsedSer = parseBatchCylinderNumbers(r.serial_numbers);
+        const count = Math.max(parsedCyl.length, parsedSer.length);
+        const rawSerialPrefix = r.serial_numbers.trim();
+
+        for (let i = 0; i < count; i++) {
+          const cStr = parsedCyl[i] || (parsedSer[i] ? parsedSer[i].replace(/[^0-9]/g, "") : "");
+          let sStr = parsedSer[i] || "";
+          if (!sStr && rawSerialPrefix && cStr) {
+            sStr = rawSerialPrefix.endsWith("-") || rawSerialPrefix.endsWith("_")
+              ? `${rawSerialPrefix.toUpperCase()}${cStr}`
+              : `${rawSerialPrefix.toUpperCase()}-${cStr}`;
+          }
+          itemsToProcess.push({ cylNumStr: cStr, serialNumStr: sStr });
+        }
+      }
+
+      for (const item of itemsToProcess) {
+        const cylNumStr = item.cylNumStr;
         const isPure = /^\d+$/.test(cylNumStr);
         const cylNum = isPure ? parseInt(cylNumStr, 10) : null;
 
-        let serialNum = "";
-        if (parsedSer[i]) {
-          serialNum = parsedSer[i];
-        } else if (rawSerialPrefix && cylNumStr) {
-          serialNum = rawSerialPrefix.endsWith("-") || rawSerialPrefix.endsWith("_")
-            ? `${rawSerialPrefix.toUpperCase()}${cylNumStr}`
-            : `${rawSerialPrefix.toUpperCase()}-${cylNumStr}`;
-        } else if (cylNumStr) {
-          serialNum = isPure ? `CYL-${cylNumStr.padStart(4, "0")}` : cylNumStr.toUpperCase();
-        } else {
-          serialNum = `SN-${Date.now()}-${i + 1}`;
+        let serialNum = item.serialNumStr;
+        if (!serialNum) {
+          serialNum = isPure ? `CYL-${cylNumStr.padStart(4, "0")}` : (cylNumStr.toUpperCase() || `SN-${Date.now()}`);
         }
 
         const meta = {
@@ -355,7 +470,6 @@ function MyCylindersContent() {
           company,
         };
 
-        // Check if existing
         const query = isPure
           ? (supabase.from("cylinders") as any).select("id").eq("cylinder_number", cylNum)
           : (supabase.from("cylinders") as any).select("id").eq("serial_number", serialNum);
@@ -379,7 +493,9 @@ function MyCylindersContent() {
       batch_number: "",
       manufacture_year: String(new Date().getFullYear()),
     });
-    setBatchRows([{ id: "batch-1", type_id: "", cylinder_numbers: "", serial_numbers: "" }]);
+    setBatchRows([createInitialBatchRow("batch-1")]);
+    loadData();
+  };
     loadData();
   };
 
@@ -920,7 +1036,7 @@ function MyCylindersContent() {
 
       {/* ── MODAL: ADD CYLINDERS / BATCH PURCHASE (MULTI-TYPE SUPPORT) ── */}
       <Dialog open={addModalOpen} onOpenChange={setAddModalOpen}>
-        <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-primary pr-6">
               <Plus className="h-5 w-5 shrink-0" /> Add Cylinders / Batch Purchase
@@ -978,40 +1094,67 @@ function MyCylindersContent() {
             </div>
 
             {/* Dynamic Gas Type Batch Rows */}
-            <div className="space-y-3">
+            <div className="space-y-4">
               <div className="flex items-center justify-between text-xs font-bold text-foreground">
                 <span className="flex items-center gap-1.5">
                   <Package className="h-4 w-4 text-primary" /> Gas Type Batches ({batchRows.length})
                 </span>
-                <span className="text-[10px] text-muted-foreground font-normal">Add multiple gas types in 1 bill</span>
+                <span className="text-[10px] text-muted-foreground font-normal">Individual side-by-side boxes per cylinder</span>
               </div>
 
               {batchRows.map((r, idx) => {
+                const selType = types.find((t) => t.id === r.type_id);
+                const validItemizedCount = r.pairs.filter((p) => p.cylinder_number.trim() || p.serial_number.trim()).length;
                 const parsedCyl = parseBatchCylinderNumbers(r.cylinder_numbers);
                 const parsedSer = parseBatchCylinderNumbers(r.serial_numbers);
-                const totalCount = Math.max(parsedCyl.length, parsedSer.length);
-                const selType = types.find((t) => t.id === r.type_id);
+                const totalBulkCount = Math.max(parsedCyl.length, parsedSer.length);
+
                 return (
                   <div
                     key={r.id}
-                    className="p-3.5 rounded-lg border-l-4 border-l-primary border border-border/70 bg-card/60 space-y-3 shadow-xs relative"
+                    className="p-3.5 rounded-lg border-l-4 border-l-primary border border-border/70 bg-card/60 space-y-3.5 shadow-xs relative"
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-border/40 pb-2">
                       <span className="text-xs font-extrabold text-foreground flex items-center gap-1.5">
                         <Tag className="h-3.5 w-3.5 text-primary" />
                         Batch #{idx + 1} {selType ? `(${selType.code})` : ""}
                       </span>
-                      {batchRows.length > 1 && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => removeBatchRow(r.id)}
-                          className="h-6 px-2 text-[11px] text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 font-semibold"
-                        >
-                          <Trash2 className="h-3.5 w-3.5 mr-1" /> Remove Batch
-                        </Button>
-                      )}
+
+                      <div className="flex items-center justify-between sm:justify-end gap-2">
+                        {/* Mode Switcher */}
+                        <div className="flex rounded-md border border-border/60 bg-secondary/40 p-0.5 text-[10px]">
+                          <button
+                            type="button"
+                            onClick={() => updateBatchRow(r.id, { entry_mode: "itemized" })}
+                            className={`px-2.5 py-1 rounded font-bold transition-all ${
+                              r.entry_mode === "itemized" ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
+                            }`}
+                          >
+                            📦 Side-by-Side Boxes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => updateBatchRow(r.id, { entry_mode: "bulk" })}
+                            className={`px-2.5 py-1 rounded font-bold transition-all ${
+                              r.entry_mode === "bulk" ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
+                            }`}
+                          >
+                            ⚡ Bulk Text
+                          </button>
+                        </div>
+
+                        {batchRows.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeBatchRow(r.id)}
+                            className="h-7 px-2 text-[11px] text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 font-semibold"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
                     </div>
 
                     <div>
@@ -1026,54 +1169,182 @@ function MyCylindersContent() {
                       </Select>
                     </div>
 
-                    {/* Tabs for Cylinder Numbers vs Serial Numbers */}
-                    <Tabs defaultValue="cyl" className="w-full pt-1">
-                      <TabsList className="grid grid-cols-2 w-full h-8 bg-secondary/60 p-0.5">
-                        <TabsTrigger value="cyl" className="text-[11px] font-bold py-1 flex items-center gap-1.5">
-                          <Hash className="h-3 w-3 text-primary" />
-                          Cylinder Numbers Tab
-                        </TabsTrigger>
-                        <TabsTrigger value="serial" className="text-[11px] font-bold py-1 flex items-center gap-1.5">
-                          <Tag className="h-3 w-3 text-emerald-400" />
-                          Serial Numbers Tab
-                        </TabsTrigger>
-                      </TabsList>
+                    {r.entry_mode === "itemized" ? (
+                      <div className="space-y-3 pt-1">
+                        {/* Auto-fill generator toolbar */}
+                        <div className="p-3 rounded-lg border border-border/60 bg-secondary/30 space-y-2">
+                          <div className="text-[11px] font-bold text-foreground flex items-center justify-between">
+                            <span>⚡ Quick Auto-Generate Boxes (e.g. 20 Boxes)</span>
+                            <span className="text-[10px] text-muted-foreground font-normal">Automatically fills side-by-side boxes</span>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
+                            <div>
+                              <Label className="text-[10px]">Box Count (e.g. 20)</Label>
+                              <Input
+                                type="number" min={1} max={200}
+                                value={r.auto_count}
+                                onChange={(e) => updateBatchRow(r.id, { auto_count: e.target.value })}
+                                className="h-8 font-mono text-xs mt-0.5"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-[10px]">Start Cyl #</Label>
+                              <Input
+                                type="number" min={1}
+                                value={r.auto_start_num}
+                                onChange={(e) => updateBatchRow(r.id, { auto_start_num: e.target.value })}
+                                className="h-8 font-mono text-xs mt-0.5"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-[10px]">Serial Prefix</Label>
+                              <Input
+                                value={r.auto_prefix}
+                                onChange={(e) => updateBatchRow(r.id, { auto_prefix: e.target.value })}
+                                placeholder="SN-"
+                                className="h-8 font-mono text-xs mt-0.5"
+                              />
+                            </div>
+                            <div className="col-span-2 sm:col-span-1">
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => generateAutoFillForBatch(r.id)}
+                                className="w-full h-8 text-[11px] font-bold gap-1"
+                              >
+                                Fill {r.auto_count || 20} Boxes
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
 
-                      <TabsContent value="cyl" className="mt-2 space-y-1">
-                        <Label className="text-xs font-semibold flex items-center justify-between">
-                          <span>Cylinder Numbers / Ranges (Manual Internal #)</span>
-                          <span className="text-[10px] text-muted-foreground font-normal">e.g. 101-150 or 101, 102</span>
-                        </Label>
-                        <Textarea
-                          value={r.cylinder_numbers}
-                          onChange={(e) => updateBatchRow(r.id, { cylinder_numbers: e.target.value })}
-                          onKeyDown={(e) => handleSpaceAutoComma(e, r.cylinder_numbers, (v) => updateBatchRow(r.id, { cylinder_numbers: v }))}
-                          placeholder="e.g. 101-150, 201-220, or 101, 102, 103"
-                          rows={2}
-                          className="font-mono text-xs mt-1"
-                        />
-                      </TabsContent>
+                        {/* Side-by-Side Box Grid / Table */}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-[11px] font-bold text-muted-foreground uppercase tracking-wider px-1">
+                            <span>Side-by-Side Boxes ({r.pairs.length} boxes | {validItemizedCount} filled)</span>
+                            <div className="flex items-center gap-1.5">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => addPairsToBatch(r.id, 1)}
+                                className="h-6 px-2 text-[10px] font-bold"
+                              >
+                                + 1 Box
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => addPairsToBatch(r.id, 5)}
+                                className="h-6 px-2 text-[10px] font-bold"
+                              >
+                                + 5 Boxes
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => addPairsToBatch(r.id, 20)}
+                                className="h-6 px-2 text-[10px] font-bold text-primary border-primary/40 bg-primary/5 hover:bg-primary/15"
+                              >
+                                + 20 Boxes
+                              </Button>
+                            </div>
+                          </div>
 
-                      <TabsContent value="serial" className="mt-2 space-y-1">
-                        <Label className="text-xs font-semibold flex items-center justify-between">
-                          <span>Mfg Serial Numbers / Ranges / Prefix (Factory Serial)</span>
-                          <span className="text-[10px] text-muted-foreground font-normal">e.g. SN-101 to SN-150 or SN-</span>
-                        </Label>
-                        <Textarea
-                          value={r.serial_numbers}
-                          onChange={(e) => updateBatchRow(r.id, { serial_numbers: e.target.value })}
-                          onKeyDown={(e) => handleSpaceAutoComma(e, r.serial_numbers, (v) => updateBatchRow(r.id, { serial_numbers: v }))}
-                          placeholder="e.g. SN-101 to SN-150, SN-001, SN-002, or prefix SN-"
-                          rows={2}
-                          className="font-mono text-xs mt-1"
-                        />
-                      </TabsContent>
-                    </Tabs>
+                          <div className="max-h-[320px] overflow-y-auto space-y-1.5 pr-1">
+                            {r.pairs.map((p, pIdx) => (
+                              <div key={p.id} className="grid grid-cols-12 gap-2 items-center p-2 rounded-md border border-border/60 bg-background/80 shadow-2xs">
+                                <div className="col-span-1 text-[10px] font-mono font-bold text-muted-foreground text-center">
+                                  #{pIdx + 1}
+                                </div>
+                                <div className="col-span-5">
+                                  <Input
+                                    type="number" min={1}
+                                    value={p.cylinder_number}
+                                    onChange={(e) => updatePairInBatch(r.id, p.id, { cylinder_number: e.target.value })}
+                                    placeholder={`Cyl #${101 + pIdx}`}
+                                    className="font-mono text-xs h-8"
+                                  />
+                                </div>
+                                <div className="col-span-5">
+                                  <Input
+                                    value={p.serial_number}
+                                    onChange={(e) => updatePairInBatch(r.id, p.id, { serial_number: e.target.value })}
+                                    placeholder={`SN-${101 + pIdx}`}
+                                    className="font-mono text-xs h-8"
+                                  />
+                                </div>
+                                <div className="col-span-1 text-center">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 text-destructive hover:bg-destructive/10"
+                                    onClick={() => removePairFromBatch(r.id, p.id)}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                            {r.pairs.length === 0 && (
+                              <p className="text-xs text-muted-foreground text-center py-4">No boxes added yet. Click "+ 20 Boxes" above.</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Bulk text mode */
+                      <Tabs defaultValue="cyl" className="w-full pt-1">
+                        <TabsList className="grid grid-cols-2 w-full h-8 bg-secondary/60 p-0.5">
+                          <TabsTrigger value="cyl" className="text-[11px] font-bold py-1 flex items-center gap-1.5">
+                            <Hash className="h-3 w-3 text-primary" />
+                            Cylinder Numbers Tab
+                          </TabsTrigger>
+                          <TabsTrigger value="serial" className="text-[11px] font-bold py-1 flex items-center gap-1.5">
+                            <Tag className="h-3 w-3 text-emerald-400" />
+                            Serial Numbers Tab
+                          </TabsTrigger>
+                        </TabsList>
 
-                    {totalCount > 0 && (
+                        <TabsContent value="cyl" className="mt-2 space-y-1">
+                          <Label className="text-xs font-semibold flex items-center justify-between">
+                            <span>Cylinder Numbers / Ranges (Manual Internal #)</span>
+                            <span className="text-[10px] text-muted-foreground font-normal">e.g. 101-150 or 101, 102</span>
+                          </Label>
+                          <Textarea
+                            value={r.cylinder_numbers}
+                            onChange={(e) => updateBatchRow(r.id, { cylinder_numbers: e.target.value })}
+                            onKeyDown={(e) => handleSpaceAutoComma(e, r.cylinder_numbers, (v) => updateBatchRow(r.id, { cylinder_numbers: v }))}
+                            placeholder="e.g. 101-150, 201-220, or 101, 102, 103"
+                            rows={2}
+                            className="font-mono text-xs mt-1"
+                          />
+                        </TabsContent>
+
+                        <TabsContent value="serial" className="mt-2 space-y-1">
+                          <Label className="text-xs font-semibold flex items-center justify-between">
+                            <span>Mfg Serial Numbers / Ranges / Prefix (Factory Serial)</span>
+                            <span className="text-[10px] text-muted-foreground font-normal">e.g. SN-101 to SN-150 or SN-</span>
+                          </Label>
+                          <Textarea
+                            value={r.serial_numbers}
+                            onChange={(e) => updateBatchRow(r.id, { serial_numbers: e.target.value })}
+                            onKeyDown={(e) => handleSpaceAutoComma(e, r.serial_numbers, (v) => updateBatchRow(r.id, { serial_numbers: v }))}
+                            placeholder="e.g. SN-101 to SN-150, SN-001, SN-002, or prefix SN-"
+                            rows={2}
+                            className="font-mono text-xs mt-1"
+                          />
+                        </TabsContent>
+                      </Tabs>
+                    )}
+
+                    {r.entry_mode === "bulk" && totalBulkCount > 0 && (
                       <div className="text-[11px] font-mono text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20 flex flex-wrap items-center justify-between gap-1">
                         <span>
-                          ✅ <strong>{totalCount} cylinder(s) parsed:</strong>{" "}
+                          ✅ <strong>{totalBulkCount} cylinder(s) parsed:</strong>{" "}
                           {parsedCyl.length > 0 && `Cyl #${parsedCyl[0]}${parsedCyl.length > 1 ? `...#${parsedCyl[parsedCyl.length - 1]}` : ''}`}
                           {parsedSer.length > 0 && ` | Serial ${parsedSer[0]}${parsedSer.length > 1 ? `...${parsedSer[parsedSer.length - 1]}` : ''}`}
                         </span>
