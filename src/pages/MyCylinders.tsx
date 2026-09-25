@@ -43,6 +43,7 @@ function handleSpaceAutoComma(
 
 // Parse batch cylinder range e.g. 101-110, A101-A120
 function parseBatchCylinderNumbers(input: string): string[] {
+  if (!input || typeof input !== "string") return [];
   const result: Set<string> = new Set();
   const parts = input.split(/[,;\n]+/);
 
@@ -1104,9 +1105,10 @@ function MyCylindersContent() {
 
               {batchRows.map((r, idx) => {
                 const selType = types.find((t) => t.id === r.type_id);
-                const validItemizedCount = r.pairs.filter((p) => p.cylinder_number.trim() || p.serial_number.trim()).length;
-                const parsedCyl = parseBatchCylinderNumbers(r.cylinder_numbers);
-                const parsedSer = parseBatchCylinderNumbers(r.serial_numbers);
+                const pairsList = r.pairs || [];
+                const validItemizedCount = pairsList.filter((p) => (p.cylinder_number || "").trim() || (p.serial_number || "").trim()).length;
+                const parsedCyl = parseBatchCylinderNumbers(r.cylinder_numbers || "");
+                const parsedSer = parseBatchCylinderNumbers(r.serial_numbers || "");
                 const totalBulkCount = Math.max(parsedCyl.length, parsedSer.length);
 
                 return (
@@ -1127,7 +1129,7 @@ function MyCylindersContent() {
                             type="button"
                             onClick={() => updateBatchRow(r.id, { entry_mode: "itemized" })}
                             className={`px-2.5 py-1 rounded font-bold transition-all ${
-                              r.entry_mode === "itemized" ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
+                              (r.entry_mode || "itemized") === "itemized" ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
                             }`}
                           >
                             📦 Side-by-Side Boxes
@@ -1169,7 +1171,7 @@ function MyCylindersContent() {
                       </Select>
                     </div>
 
-                    {r.entry_mode === "itemized" ? (
+                    {(r.entry_mode || "itemized") === "itemized" ? (
                       <div className="space-y-3 pt-1">
                         {/* Auto-fill generator toolbar */}
                         <div className="p-3 rounded-lg border border-border/60 bg-secondary/30 space-y-2">
@@ -1182,7 +1184,7 @@ function MyCylindersContent() {
                               <Label className="text-[10px]">Box Count (e.g. 20)</Label>
                               <Input
                                 type="number" min={1} max={200}
-                                value={r.auto_count}
+                                value={r.auto_count || "20"}
                                 onChange={(e) => updateBatchRow(r.id, { auto_count: e.target.value })}
                                 className="h-8 font-mono text-xs mt-0.5"
                               />
@@ -1191,7 +1193,7 @@ function MyCylindersContent() {
                               <Label className="text-[10px]">Start Cyl #</Label>
                               <Input
                                 type="number" min={1}
-                                value={r.auto_start_num}
+                                value={r.auto_start_num || "101"}
                                 onChange={(e) => updateBatchRow(r.id, { auto_start_num: e.target.value })}
                                 className="h-8 font-mono text-xs mt-0.5"
                               />
@@ -1199,7 +1201,7 @@ function MyCylindersContent() {
                             <div>
                               <Label className="text-[10px]">Serial Prefix</Label>
                               <Input
-                                value={r.auto_prefix}
+                                value={r.auto_prefix || "SN-"}
                                 onChange={(e) => updateBatchRow(r.id, { auto_prefix: e.target.value })}
                                 placeholder="SN-"
                                 className="h-8 font-mono text-xs mt-0.5"
@@ -1221,7 +1223,7 @@ function MyCylindersContent() {
                         {/* Side-by-Side Box Grid / Table */}
                         <div className="space-y-2">
                           <div className="flex items-center justify-between text-[11px] font-bold text-muted-foreground uppercase tracking-wider px-1">
-                            <span>Side-by-Side Boxes ({r.pairs.length} boxes | {validItemizedCount} filled)</span>
+                            <span>Side-by-Side Boxes ({pairsList.length} boxes | {validItemizedCount} filled)</span>
                             <div className="flex items-center gap-1.5">
                               <Button
                                 type="button"
@@ -1254,7 +1256,7 @@ function MyCylindersContent() {
                           </div>
 
                           <div className="max-h-[320px] overflow-y-auto space-y-1.5 pr-1">
-                            {r.pairs.map((p, pIdx) => (
+                            {pairsList.map((p, pIdx) => (
                               <div key={p.id} className="grid grid-cols-12 gap-2 items-center p-2 rounded-md border border-border/60 bg-background/80 shadow-2xs">
                                 <div className="col-span-1 text-[10px] font-mono font-bold text-muted-foreground text-center">
                                   #{pIdx + 1}
