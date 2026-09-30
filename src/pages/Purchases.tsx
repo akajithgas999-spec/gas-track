@@ -516,10 +516,12 @@ export default function Purchases() {
         if (existing) {
           cylinderId = existing.id;
           await supabase.from("cylinders").update({
+            type_id: l.type_id,
             status: "in_stock",
             current_customer_id: null,
             fill_status: l.fill_status,
             purchased_at: purchaseDate,
+            company: company,
           } as any).eq("id", existing.id);
         } else {
           const { data: created } = await supabase.from("cylinders").insert({
@@ -529,6 +531,7 @@ export default function Purchases() {
             status: "in_stock",
             fill_status: l.fill_status,
             purchased_at: purchaseDate,
+            company: company,
           } as any).select().single();
           cylinderId = created?.id ?? null;
         }
@@ -537,10 +540,12 @@ export default function Purchases() {
         if (existing) {
           cylinderId = existing.id;
           await supabase.from("cylinders").update({
+            type_id: l.type_id,
             status: "in_stock",
             current_customer_id: null,
             fill_status: l.fill_status,
             purchased_at: purchaseDate,
+            company: company,
           } as any).eq("id", existing.id);
         } else {
           const { data: created } = await supabase.from("cylinders").insert({
@@ -549,6 +554,7 @@ export default function Purchases() {
             status: "in_stock",
             fill_status: l.fill_status,
             purchased_at: purchaseDate,
+            company: company,
           } as any).select().single();
           cylinderId = created?.id ?? null;
         }

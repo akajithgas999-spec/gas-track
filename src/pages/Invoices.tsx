@@ -63,6 +63,26 @@ function getCylId(c: any): string {
   return String(c.serial_number ?? "").trim().toUpperCase();
 }
 
+function cylMatches(c: any, target: string): boolean {
+  if (!target) return false;
+  const clean = target.trim().toUpperCase();
+  if (!clean) return false;
+
+  const cylNum = c.cylinder_number !== undefined && c.cylinder_number !== null ? String(c.cylinder_number).trim().toUpperCase() : "";
+  const serialNum = c.serial_number ? String(c.serial_number).trim().toUpperCase() : "";
+
+  if (cylNum && cylNum === clean) return true;
+  if (serialNum && serialNum === clean) return true;
+
+  if (/^\d+$/.test(clean)) {
+    const pad4 = clean.padStart(4, "0");
+    if (serialNum && (serialNum === `CYL-${pad4}` || serialNum === `CYL-${clean}` || serialNum.endsWith(`-${clean}`) || serialNum.endsWith(`_${clean}`))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function handleSpaceAutoComma(
   e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
   currentValue: string,
@@ -345,7 +365,7 @@ export default function Invoices() {
 
     // Validate that all issued cylinders are purchased and in warehouse stock
     const unpurchasedIssued = allIssued.filter(
-      (n) => !stockCylinders.some((c) => getCylId(c) === n)
+      (n) => !stockCylinders.some((c) => cylMatches(c, n))
     );
     if (unpurchasedIssued.length > 0) {
       return toast.error(
@@ -425,7 +445,7 @@ export default function Invoices() {
     for (const l of lines) {
       const issuedNums = parseCylNums(l.issued_numbers);
       for (const cylId of issuedNums) {
-        let cyl = stockCylinders.find((c) => getCylId(c) === cylId);
+        let cyl = stockCylinders.find((c) => cylMatches(c, cylId));
         if (!cyl) {
           const isPure = /^\d+$/.test(cylId);
           const { data: found } = isPure
@@ -570,9 +590,9 @@ export default function Invoices() {
           )}
         </Button>
         <div className="w-full sm:w-auto sm:ml-auto">
-          <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetForm(); }}>
+          <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (v) loadCylinders(); if (!v) resetForm(); }}>
             <DialogTrigger asChild>
-              <Button onClick={() => { resetForm(); setOpen(true); }} className="w-full sm:w-auto gap-2">
+              <Button onClick={() => { resetForm(); loadCylinders(); setOpen(true); }} className="w-full sm:w-auto gap-2">
                 <Plus className="h-4 w-4" /> New GST Invoice
               </Button>
             </DialogTrigger>
@@ -710,10 +730,10 @@ export default function Invoices() {
                         {/* Issued Cylinder Numbers */}
                         <div>
                           {(() => {
-                            const availStock = stockCylinders.filter((c) => !l.type_id || c.type_id === l.type_id);
+                            const availStock = stockCylinders.filter((c) => !l.type_id || String(c.type_id) === String(l.type_id));
                             const currentIssued = parseCylNums(l.issued_numbers);
                             const invalidIssued = currentIssued.filter(
-                              (n) => !stockCylinders.some((c) => getCylId(c) === n)
+                              (n) => !stockCylinders.some((c) => cylMatches(c, n))
                             );
                             return (
                               <>
@@ -745,7 +765,7 @@ export default function Invoices() {
                                     <div className="flex flex-wrap gap-1 max-h-28 overflow-y-auto p-1.5 rounded-lg border border-border/40 bg-secondary/20">
                                       {availStock.map((c) => {
                                         const cylId = getCylId(c);
-                                        const isSelected = currentIssued.includes(cylId);
+                                        const isSelected = currentIssued.some((n) => cylMatches(c, n));
                                         return (
                                           <button
                                             key={c.id}
@@ -786,7 +806,7 @@ export default function Invoices() {
                         {/* Returned Cylinder Numbers */}
                         <div>
                           {(() => {
-                            const availIssued = issuedCylinders.filter((c) => !l.type_id || c.type_id === l.type_id);
+                            const availIssued = issuedCylinders.filter((c) => !l.type_id || String(c.type_id) === String(l.type_id));
                             const currentReturned = parseCylNums(l.returned_numbers);
                             const selectedCust = customers.find((cust: any) => cust.id === form.customer_id);
 
